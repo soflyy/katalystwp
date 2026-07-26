@@ -36,5 +36,8 @@
     "directory": "create-katalystwp"
   },
   "author": "Soflyy",
-  "license": "GPL-2.0-or-later"
+  "license": "GPL-2.0-or-later",
+  "dependencies": {
+    "@clack/prompts": "^1.7.0"
+  }
 }

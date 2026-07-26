@@ -12,7 +12,6 @@ import { dirname, join, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { spawn } from 'node:child_process';
-import { createInterface } from 'node:readline/promises';
 import { createServer, connect } from 'node:net';
 import { stat } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
@@ -51,6 +50,11 @@ export const AGENTS = {
   opencode: { label: 'OpenCode', pkg: 'opencode-ai' },
 };
 const DEFAULT_AGENTS = ['claude'];
+
+// OSC 8 terminal hyperlink — clickable in iTerm2, Windows Terminal, VS Code,
+// and most modern emulators; unsupported terminals just show the plain URL,
+// and piped output gets the URL untouched.
+const termLink = (url) => (process.stdout.isTTY ? `\u001b]8;;${url}\u0007${url}\u001b]8;;\u0007` : url);
 
 // Parse an agents list ("claude,cursor", "all", "none"). Used by --agents and
 // by preset.agents. Throws on unknown names so typos fail loudly.
@@ -368,74 +372,83 @@ async function loadUserConfig() {
 }
 
 // Interactive chooser — runs only in a real terminal and only for choices not
-// already made via flags. Enter accepts the default on every question.
-async function promptForChoices({ dir, defaultDir, port, askPort, claimed, agents, plugins, defaultAgents }) {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  const keys = Object.keys(AGENTS);
-  // A closed stdin (Ctrl+D, or a script that stopped supplying answers) means
-  // "accept the defaults for everything else", never a crash.
-  let closed = false;
-  const ask = async (q) => {
-    if (closed) return '';
-    try {
-      return (await rl.question(q)).trim();
-    } catch {
-      closed = true;
-      return '';
-    }
-  };
+// already made via flags/arguments. Uses @clack/prompts (arrow keys; space
+// toggles a selection; Enter accepts). Loaded dynamically so non-interactive
+// callers (CI, the devbox server driving index.js from a bare checkout) never
+// need the dependency at all — if it's missing we warn and use the defaults.
+async function promptForChoices({ pkg, dir, defaultDir, port, askPort, claimed, agents, plugins, defaultAgents }) {
+  let p;
   try {
-    if (dir == null) {
-      // Re-ask on a non-empty directory so the user doesn't answer everything
-      // else first and only then hit the "not empty" error.
-      for (;;) {
-        const a = await ask(`? Project directory [${defaultDir}]: `);
-        const candidate = a || defaultDir;
-        const existing = await readdir(resolve(candidate)).catch(() => []);
-        const blocking = existing.filter((f) => !ALLOWED_EXISTING.has(f));
-        if (!blocking.length || closed) { dir = candidate; break; }
-        console.log(`  ✖ ${resolve(candidate)} is not empty — pick a new or empty directory.`);
-      }
-    }
-    if (askPort) {
-      for (;;) {
-        const a = await ask(`? Host port for the WordPress site [${port}]: `);
-        if (!a) break; // the offered default is pre-checked as free
-        const n = parseInt(a, 10);
-        if (!/^\d+$/.test(a) || n < 1 || n > 65535) { console.log('  ✖ Enter a port number (1-65535).'); continue; }
-        if (claimed.has(n) || !(await portFree(n))) { console.log(`  ✖ Port ${n} is busy (another environment or process) — pick a different one.`); continue; }
-        port = a;
-        break;
-      }
-    }
-    if (agents == null) {
-      console.log('? AI coding agents to install in the workspace:');
-      keys.forEach((k, i) => console.log(`    ${i + 1}) ${AGENTS[k].label}`));
-      console.log(`    ${keys.length + 1}) All of the above`);
-      console.log('    0) None — plain workspace (Node, PHP, WP-CLI, MCP servers)');
-      const def = defaultAgents.map((k) => keys.indexOf(k) + 1).join(',') || '0';
-      for (;;) {
-        const raw = await ask(`  Numbers, comma-separated [${def} — ${defaultAgents.map((k) => AGENTS[k].label).join(', ') || 'none'}]: `);
-        if (!raw) { agents = [...defaultAgents]; break; }
-        if (raw === '0' || /^none$/i.test(raw)) { agents = []; break; }
-        if (raw === String(keys.length + 1) || /^all$/i.test(raw)) { agents = keys; break; }
-        const picked = [];
-        let ok = true;
-        for (const tok of raw.split(',').map((s) => s.trim()).filter(Boolean)) {
-          const k = /^\d+$/.test(tok) ? keys[parseInt(tok, 10) - 1] : keys.find((x) => x === tok.toLowerCase());
-          if (!k) { console.log(`  ✖ "${tok}" isn't a choice — enter numbers 0-${keys.length + 1} or agent names.`); ok = false; break; }
-          if (!picked.includes(k)) picked.push(k);
-        }
-        if (ok) { agents = picked; break; }
-      }
-    }
-    if (plugins == null) {
-      const raw = await ask('? WordPress plugins to pre-install — wordpress.org slugs or .zip URLs, comma-separated [none]: ');
-      plugins = raw ? raw.split(',').map((s) => s.trim()).filter(Boolean) : [];
-    }
-  } finally {
-    rl.close();
+    p = await import('@clack/prompts');
+  } catch {
+    console.error('⚠ Interactive prompts need this package\'s dependencies (npm install) — using defaults instead.');
+    return { dir: dir ?? defaultDir, port, agents: agents ?? [...defaultAgents], plugins: plugins ?? [] };
   }
+  // Ctrl+C (or closing stdin) on any question aborts cleanly before anything
+  // is written to disk.
+  const answer = (v) => {
+    if (p.isCancel(v)) {
+      p.cancel('Cancelled — nothing was created.');
+      process.exit(1);
+    }
+    return typeof v === 'string' ? v.trim() : v;
+  };
+
+  p.intro(pkg);
+  if (dir == null) {
+    // Re-ask on a non-empty directory so the user doesn't answer everything
+    // else first and only then hit the "not empty" error.
+    for (;;) {
+      const a = answer(await p.text({
+        message: 'Project directory',
+        placeholder: defaultDir,
+        defaultValue: defaultDir,
+      })) || defaultDir;
+      const existing = await readdir(resolve(a)).catch(() => []);
+      const blocking = existing.filter((f) => !ALLOWED_EXISTING.has(f));
+      if (!blocking.length) { dir = a; break; }
+      p.log.error(`${resolve(a)} is not empty — pick a new or empty directory.`);
+    }
+  }
+  if (askPort) {
+    for (;;) {
+      const a = answer(await p.text({
+        message: 'Host port for the WordPress site',
+        placeholder: String(port),
+        defaultValue: String(port),
+        validate: (v) => (v && v.trim() && !/^\d{1,5}$/.test(v.trim()) ? 'Enter a port number (1-65535).' : undefined),
+      })) || String(port);
+      const n = parseInt(a, 10);
+      if (!(n >= 1 && n <= 65535)) { p.log.error('Enter a port number (1-65535).'); continue; }
+      if (claimed.has(n) || !(await portFree(n))) {
+        p.log.error(`Port ${n} is busy (another environment or process) — pick a different one.`);
+        continue;
+      }
+      port = String(n);
+      break;
+    }
+  }
+  if (agents == null) {
+    agents = answer(await p.multiselect({
+      message: 'AI coding agents to install in the workspace (space toggles, none is fine)',
+      options: Object.entries(AGENTS).map(([value, a]) => ({
+        value,
+        label: a.label,
+        hint: defaultAgents.includes(value) ? 'default' : undefined,
+      })),
+      initialValues: [...defaultAgents],
+      required: false,
+    }));
+  }
+  if (plugins == null) {
+    const a = answer(await p.text({
+      message: 'WordPress plugins to pre-install (wordpress.org slugs or .zip URLs, comma-separated)',
+      placeholder: 'none',
+      defaultValue: '',
+    }));
+    plugins = a ? a.split(',').map((s) => s.trim()).filter(Boolean) : [];
+  }
+  p.outro('Scaffolding…');
   return { dir, port, agents, plugins };
 }
 
@@ -588,9 +601,8 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
   const undecided = args.dir == null || agents == null || extraPlugins == null || !args.portExplicit;
   const canPrompt = !args.yes && process.stdin.isTTY && process.stdout.isTTY;
   if (undecided && canPrompt) {
-    console.log(`\n${pkg} — press Enter to accept a default; --yes skips these questions.\n`);
     ({ dir: args.dir, port, agents, plugins: extraPlugins } = await promptForChoices({
-      dir: args.dir, defaultDir: 'my-site', port, askPort: !args.portExplicit, claimed, agents, plugins: extraPlugins, defaultAgents,
+      pkg, dir: args.dir, defaultDir: 'my-site', port, askPort: !args.portExplicit, claimed, agents, plugins: extraPlugins, defaultAgents,
     }));
   }
   agents ??= defaultAgents;
@@ -720,7 +732,7 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
     console.log('  npm run start        # subsequent runs: just bring the containers up');
     for (const l of agentRunLines) console.log(l);
     console.log('');
-    console.log(`Once setup finishes, your site is at http://${args.publicHost}:${args.port} — log in at /wp-admin with admin / password (default; set WP_ADMIN_USER / WP_ADMIN_PASSWORD in .env to change).`);
+    console.log(`Once setup finishes, your site is at ${termLink(`http://${args.publicHost}:${args.port}`)} — log in at /wp-admin with admin / password (default; set WP_ADMIN_USER / WP_ADMIN_PASSWORD in .env to change).`);
     return;
   }
 
@@ -751,12 +763,12 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
   console.log('');
   console.log('───────────────────────────────────────────────');
   console.log('  Your WordPress site is ready:');
-  console.log(`    Site:     http://${args.publicHost}:${args.port}`);
-  console.log(`    Admin:    http://${args.publicHost}:${args.port}/wp-admin`);
+  console.log(`    Site:     ${termLink(`http://${args.publicHost}:${args.port}`)}`);
+  console.log(`    Admin:    ${termLink(`http://${args.publicHost}:${args.port}/wp-admin`)}`);
   console.log('    Username: admin');
   console.log('    Password: password');
   for (const p of appPorts) {
-    console.log(`    App:      http://${args.publicHost}:${p.host} → workspace:${p.container}`);
+    console.log(`    App:      ${termLink(`http://${args.publicHost}:${p.host}`)} → workspace:${p.container}`);
   }
   console.log('───────────────────────────────────────────────');
   console.log('');

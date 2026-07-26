@@ -15,7 +15,7 @@ Run in a terminal, it asks a few questions (Enter accepts the default; anything 
 
 1. **Project directory** — suggested `my-site` (or pass it as the first argument)
 2. **Host port** for the site — the default offered is the first free port from `8080` that no other environment claims (busy ports are rejected with a re-ask)
-3. **AI coding agents** to install in the workspace — pick from Claude Code (default), Cursor CLI, Codex CLI, OpenCode, all, or **none**; only what you pick gets installed
+3. **AI coding agents** to install in the workspace — arrow keys + space to pick any of Claude Code (preselected), Cursor CLI, Codex CLI, OpenCode; confirm with nothing selected for a plain no-agent workspace. Only what you pick gets installed
 4. **WordPress plugins** to pre-install — wordpress.org slugs or `.zip` URLs, default none
 
 During setup only the step lines are shown (`→ Installing WordPress…`, `✓ …`); the full output — Docker build and all — is captured to `~/.katalystwp/logs/<name>.setup.log` and its tail is printed automatically if setup fails. `--verbose` streams everything.
