@@ -14,9 +14,11 @@ npm create katalystwp@latest
 Run in a terminal, it asks a few questions (Enter accepts the default; anything you already gave as an argument or flag is never asked):
 
 1. **Project directory** — suggested `my-site` (or pass it as the first argument)
-2. **Host port** for the site — default `8080`
+2. **Host port** for the site — the default offered is the first free port from `8080` that no other environment claims (busy ports are rejected with a re-ask)
 3. **AI coding agents** to install in the workspace — pick from Claude Code (default), Cursor CLI, Codex CLI, OpenCode, all, or **none**; only what you pick gets installed
 4. **WordPress plugins** to pre-install — wordpress.org slugs or `.zip` URLs, default none
+
+During setup only the step lines are shown (`→ Installing WordPress…`, `✓ …`); the full output — Docker build and all — is captured to `~/.katalystwp/logs/<name>.setup.log` and its tail is printed automatically if setup fails. `--verbose` streams everything.
 
 Non-interactively (CI, scripts, or `--yes`) it takes those defaults and prints them. Flags answer a question in advance — flagged choices are never asked:
 
@@ -46,6 +48,26 @@ npx create-katalystwp my-site --scaffold-only
 
 > Through `npm create`, put the flags after `--`, e.g.
 > `npm create katalystwp@latest my-site -- --port=8090`.
+
+## Your environments
+
+Every environment you scaffold is recorded in `~/.katalystwp/environments.json` (shared by all `create-<brand>` wrappers). List them — with live up/stopped status — any time:
+
+```bash
+npx create-katalystwp list
+```
+
+```
+Environments (~/.katalystwp/environments.json):
+
+  NAME       PORT  STATUS   AGENTS         DIR
+  my-site    8080  up       claude         /Users/you/my-site
+  client-b   8081  stopped  claude,cursor  /Users/you/client-b
+
+  Start/stop one: cd <dir> && npm run start | npm run stop
+```
+
+The registry is also what lets a new scaffold auto-pick a port that a *stopped* environment owns without conflict. Entries whose directory has been deleted are pruned automatically; setup logs live next to it in `~/.katalystwp/logs/`.
 
 Docker must be running. When it finishes you have a live site at **http://localhost:8080** — log in at `/wp-admin` with `admin` / `password` (the default; configurable in `.env` via `WP_ADMIN_USER` / `WP_ADMIN_PASSWORD`). Then:
 

@@ -11,8 +11,11 @@ import { readdir, mkdir, readFile, writeFile, chown } from 'node:fs/promises';
 import { dirname, join, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
+import { createServer, connect } from 'node:net';
+import { stat } from 'node:fs/promises';
+import { createWriteStream } from 'node:fs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TEMPLATES = join(HERE, 'templates');
@@ -62,6 +65,132 @@ function parseAgentsList(raw, source = '--agents') {
   return [...new Set(items)];
 }
 
+// ---- environments registry (~/.katalystwp/environments.json) --------------
+// Every scaffolded sandbox is recorded here (shared across create-<brand>
+// wrappers, since they all use this engine). Used to (a) auto-pick a WP port
+// that no other environment — running or stopped — already claims, and (b)
+// power the `list` command. Best-effort: a missing/corrupt file is an empty
+// registry, and a failed write never breaks scaffolding.
+export const STATE_DIR = join(homedir(), '.katalystwp');
+export const STATE_PATH = join(STATE_DIR, 'environments.json');
+
+async function loadState() {
+  try {
+    const s = JSON.parse(await readFile(STATE_PATH, 'utf8'));
+    if (s && Array.isArray(s.environments)) return s;
+  } catch { /* fall through */ }
+  return { environments: [] };
+}
+
+async function saveState(state) {
+  try {
+    await mkdir(STATE_DIR, { recursive: true });
+    await writeFile(STATE_PATH, JSON.stringify(state, null, 2) + '\n');
+  } catch { /* registry is best-effort */ }
+}
+
+// Record (or update, keyed by dir) one environment.
+async function recordEnvironment(env) {
+  const state = await loadState();
+  const i = state.environments.findIndex((e) => e.dir === env.dir);
+  if (i >= 0) state.environments[i] = { ...state.environments[i], ...env };
+  else state.environments.push(env);
+  await saveState(state);
+}
+
+// Can we listen on this port? (Docker-published ports bind 0.0.0.0, so they —
+// and any other host listener — make this return false.)
+function portFree(port) {
+  return new Promise((res) => {
+    const srv = createServer();
+    srv.once('error', () => res(false));
+    srv.listen({ port, host: '0.0.0.0', exclusive: true }, () => srv.close(() => res(true)));
+  });
+}
+
+// Is something accepting connections on this port right now? (Used by `list`
+// to show up/stopped.)
+function portInUse(port) {
+  return new Promise((res) => {
+    const sock = connect({ port, host: '127.0.0.1' });
+    const done = (v) => { sock.destroy(); res(v); };
+    sock.once('connect', () => done(true));
+    sock.once('error', () => done(false));
+    sock.setTimeout(500, () => done(false));
+  });
+}
+
+// First port >= `start` that is free on the host AND not claimed by a
+// registered environment (which may just be stopped right now).
+async function findFreePort(start, claimed) {
+  for (let p = start; p < start + 1000; p++) {
+    if (claimed.has(p)) continue;
+    if (await portFree(p)) return p;
+  }
+  return start; // pathological — let Docker surface the error
+}
+
+// `npx create-<brand> list` — show every registered environment. Entries whose
+// directory no longer exists are pruned as we go.
+async function listEnvironments() {
+  const state = await loadState();
+  const kept = [];
+  const rows = [];
+  for (const env of state.environments) {
+    const exists = await stat(env.dir).then((s) => s.isDirectory()).catch(() => false);
+    if (!exists) continue; // deleted on disk — drop from the registry
+    kept.push(env);
+    rows.push({
+      name: env.name,
+      port: String(env.port),
+      status: (await portInUse(env.port)) ? 'up' : 'stopped',
+      agents: (env.agents ?? []).join(',') || 'none',
+      dir: env.dir,
+    });
+  }
+  if (kept.length !== state.environments.length) await saveState({ ...state, environments: kept });
+  if (!rows.length) {
+    console.log('\nNo environments yet. Create one with: npm create katalystwp@latest\n');
+    return;
+  }
+  const w = (k, h) => Math.max(h.length, ...rows.map((r) => r[k].length));
+  const widths = { name: w('name', 'NAME'), port: w('port', 'PORT'), status: w('status', 'STATUS'), agents: w('agents', 'AGENTS') };
+  console.log(`\nEnvironments (${STATE_PATH}):\n`);
+  console.log(`  ${'NAME'.padEnd(widths.name)}  ${'PORT'.padEnd(widths.port)}  ${'STATUS'.padEnd(widths.status)}  ${'AGENTS'.padEnd(widths.agents)}  DIR`);
+  for (const r of rows) {
+    console.log(`  ${r.name.padEnd(widths.name)}  ${r.port.padEnd(widths.port)}  ${r.status.padEnd(widths.status)}  ${r.agents.padEnd(widths.agents)}  ${r.dir}`);
+  }
+  console.log('\n  Start/stop one: cd <dir> && npm run start | npm run stop\n');
+}
+
+// Run `npm run setup` in the project, capturing EVERYTHING to a log file under
+// ~/.katalystwp/logs/ and showing only the setup scripts' own step lines
+// (→ / ✓ / ✖ / ⚠ and their indented detail) — not the Docker build firehose.
+// --verbose streams the raw output as before. Resolves true on success.
+function runSetup(cwd, logPath, verbose) {
+  return new Promise((res) => {
+    const log = createWriteStream(logPath);
+    const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+    const child = spawn(npm, ['run', 'setup'], { cwd });
+    let buf = '';
+    const onChunk = (chunk) => {
+      log.write(chunk);
+      if (verbose) { process.stdout.write(chunk); return; }
+      buf += chunk.toString();
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, i);
+        buf = buf.slice(i + 1);
+        if (/^(→|✓|✖|⚠|Success:)/.test(line) || /^ {4}\S/.test(line)) console.log(line);
+      }
+    };
+    child.stdout.on('data', onChunk);
+    child.stderr.on('data', onChunk);
+    child.on('close', (code) => { log.end(); res(code === 0); });
+    child.on('error', () => { log.end(); res(false); });
+  });
+}
+
 // Strip or keep "# >>> agent:<name> … # <<< agent:<name>" sections in a
 // template based on the selected agents. The marker lines themselves never
 // reach the output.
@@ -79,6 +208,7 @@ function parseArgs(argv) {
     else if (a.startsWith('--agents=')) out.agentsRaw = a.slice('--agents='.length);
     else if (a.startsWith('--plugins=')) out.pluginsRaw = a.slice('--plugins='.length);
     else if (a === '--yes' || a === '-y') out.yes = true;
+    else if (a === '--verbose') out.verbose = true;
     else if (a.startsWith('--setup-script=')) out.setupScript = a.slice('--setup-script='.length);
     else if (a.startsWith('--dev-script=')) out.devScript = a.slice('--dev-script='.length);
     else if (a.startsWith('--dev-command=')) out.devCommand = a.slice('--dev-command='.length);
@@ -158,13 +288,19 @@ Usage:
   npm ${create} -- [dir] [options]
   npx ${pkg} [dir] [options]
 
+Commands:
+  list                  Show every environment recorded in ~/.katalystwp
+                        (name, port, up/stopped, agents, directory).
+
 Arguments:
   dir                   Target directory. Asked interactively when omitted
                         (suggested: my-site); non-interactive runs default to
                         the current directory.
 
 Options:
-  --port=NNNN           Host port for WordPress (default: 8080)
+  --port=NNNN           Host port for WordPress. Default: the first free port
+                        from 8080 that no other environment claims. An explicit
+                        busy port fails fast with a suggestion.
   --agents=LIST         AI coding agents to install in the workspace, comma-
                         separated: ${Object.keys(AGENTS).join(', ')} — or
                         'all' / 'none'. Default: claude (Claude Code).
@@ -173,6 +309,9 @@ Options:
   --yes, -y             Accept defaults; never prompt. (Prompts only appear in
                         an interactive terminal anyway — CI and scripts are
                         always non-interactive.)
+  --verbose             Stream the full setup output (Docker build and all).
+                        By default only the step lines are shown and the full
+                        output goes to ~/.katalystwp/logs/<name>.setup.log.
   --setup-script=PATH   Shell script to run inside the workspace (as node) on
                         first setup — e.g. clone a repo and run its installer.
   --dev-script=PATH     Shell script run (as node) in its own long-running 'dev'
@@ -230,7 +369,7 @@ async function loadUserConfig() {
 
 // Interactive chooser — runs only in a real terminal and only for choices not
 // already made via flags. Enter accepts the default on every question.
-async function promptForChoices({ dir, defaultDir, port, askPort, agents, plugins, defaultAgents }) {
+async function promptForChoices({ dir, defaultDir, port, askPort, claimed, agents, plugins, defaultAgents }) {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   const keys = Object.keys(AGENTS);
   // A closed stdin (Ctrl+D, or a script that stopped supplying answers) means
@@ -259,8 +398,15 @@ async function promptForChoices({ dir, defaultDir, port, askPort, agents, plugin
       }
     }
     if (askPort) {
-      const a = await ask(`? Host port for the WordPress site [${port}]: `);
-      if (a) port = a;
+      for (;;) {
+        const a = await ask(`? Host port for the WordPress site [${port}]: `);
+        if (!a) break; // the offered default is pre-checked as free
+        const n = parseInt(a, 10);
+        if (!/^\d+$/.test(a) || n < 1 || n > 65535) { console.log('  ✖ Enter a port number (1-65535).'); continue; }
+        if (claimed.has(n) || !(await portFree(n))) { console.log(`  ✖ Port ${n} is busy (another environment or process) — pick a different one.`); continue; }
+        port = a;
+        break;
+      }
     }
     if (agents == null) {
       console.log('? AI coding agents to install in the workspace:');
@@ -387,6 +533,10 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
     usage(pkg, `create ${slug}`);
     return;
   }
+  if (args.dir === 'list') {
+    await listEnvironments();
+    return;
+  }
 
   // Read & validate the file-backed inputs first, so a bad --setup-script /
   // --dev-script / --defines path fails before we create or write anything.
@@ -413,14 +563,34 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
   let extraPlugins = args.pluginsRaw != null
     ? args.pluginsRaw.split(',').map((s) => s.trim()).filter(Boolean)
     : null;
-  let port = String(args.port);
+
+  // Port: an explicit --port is validated (fail fast with a clear message
+  // instead of Docker's "Bind for 0.0.0.0:NNNN failed" at setup time); without
+  // one, the default offered — and used in auto mode — is the first port from
+  // 8080 that is free on the host AND not claimed by another registered
+  // environment (which may just be stopped right now).
+  const state = await loadState();
+  const claimed = new Set(state.environments.map((e) => Number(e.port)));
+  let port;
+  if (args.portExplicit) {
+    port = String(args.port);
+    const n = parseInt(port, 10);
+    if (!(await portFree(n))) {
+      const holder = state.environments.find((e) => Number(e.port) === n);
+      console.error(`\n✖ Port ${n} is already in use${holder ? ` by your "${holder.name}" environment (${holder.dir})` : ''}.`);
+      console.error(`  Free alternative: --port=${await findFreePort(n + 1, claimed)}${holder ? `, or stop that environment: cd ${holder.dir} && npm run stop` : ''}\n`);
+      process.exit(1);
+    }
+  } else {
+    port = String(await findFreePort(parseInt(args.port, 10) || 8080, claimed));
+  }
 
   const undecided = args.dir == null || agents == null || extraPlugins == null || !args.portExplicit;
   const canPrompt = !args.yes && process.stdin.isTTY && process.stdout.isTTY;
   if (undecided && canPrompt) {
     console.log(`\n${pkg} — press Enter to accept a default; --yes skips these questions.\n`);
     ({ dir: args.dir, port, agents, plugins: extraPlugins } = await promptForChoices({
-      dir: args.dir, defaultDir: 'my-site', port, askPort: !args.portExplicit, agents, plugins: extraPlugins, defaultAgents,
+      dir: args.dir, defaultDir: 'my-site', port, askPort: !args.portExplicit, claimed, agents, plugins: extraPlugins, defaultAgents,
     }));
   }
   agents ??= defaultAgents;
@@ -525,6 +695,18 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
     }
   }
 
+  // Register the environment (best-effort) — powers `list` and keeps future
+  // scaffolds off this port even while the stack is stopped.
+  const setupLog = join(STATE_DIR, 'logs', `${projectName}.setup.log`);
+  await recordEnvironment({
+    name: projectName,
+    dir: targetDir,
+    port: parseInt(port, 10),
+    agents,
+    createdAt: new Date().toISOString(),
+    setupLog,
+  });
+
   const cd = args.dir ? args.dir : '.';
   // One aligned "npm run <agent>  # launch <label> in the workspace" line per
   // selected agent, reused in both the scaffold-only and post-setup messages.
@@ -542,14 +724,20 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
     return;
   }
 
-  console.log('→ Running initial setup (Docker must be running)…\n');
-  const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-  const res = spawnSync(npm, ['run', 'setup'], { cwd: targetDir, stdio: 'inherit' });
-  if (res.error || res.status !== 0) {
-    console.error('\n✖ Initial setup did not finish (is Docker running?).');
-    console.error('  Your files are scaffolded — retry once Docker is up:');
+  console.log('→ Running initial setup (Docker must be running)…');
+  if (!args.verbose) {
+    console.log(`  The first build takes a few minutes. Full log: ${setupLog} (--verbose streams it)\n`);
+  }
+  await mkdir(join(STATE_DIR, 'logs'), { recursive: true }).catch(() => {});
+  const ok = await runSetup(targetDir, setupLog, args.verbose);
+  if (!ok) {
+    console.error('\n✖ Initial setup did not finish (is Docker running?). Last lines of the log:\n');
+    const logTail = await readFile(setupLog, 'utf8').then((s) => s.trimEnd().split('\n').slice(-15)).catch(() => []);
+    for (const l of logTail) console.error(`    ${l}`);
+    console.error(`\n  Full log: ${setupLog}`);
+    console.error('  Your files are scaffolded — retry with:');
     console.error(`    cd ${cd} && npm run setup\n`);
-    process.exit(res.status ?? 1);
+    process.exit(1);
   }
 
   console.log('\nEveryday commands:');
