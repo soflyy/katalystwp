@@ -8,14 +8,15 @@ It scaffolds the project **and runs the initial setup** for you — `docker comp
 
 ```bash
 # npm create form (the create- prefix enables this):
-npm create katalystwp@latest my-site
+npm create katalystwp@latest
 ```
 
-Run in a terminal, it asks three questions (Enter accepts the default):
+Run in a terminal, it asks a few questions (Enter accepts the default; anything you already gave as an argument or flag is never asked):
 
-1. **Host port** for the site — default `8080`
-2. **AI coding agents** to install in the workspace — pick from Claude Code (default), Cursor CLI, Codex CLI, OpenCode, all, or **none**; only what you pick gets installed
-3. **WordPress plugins** to pre-install — wordpress.org slugs or `.zip` URLs, default none
+1. **Project directory** — suggested `my-site` (or pass it as the first argument)
+2. **Host port** for the site — default `8080`
+3. **AI coding agents** to install in the workspace — pick from Claude Code (default), Cursor CLI, Codex CLI, OpenCode, all, or **none**; only what you pick gets installed
+4. **WordPress plugins** to pre-install — wordpress.org slugs or `.zip` URLs, default none
 
 Non-interactively (CI, scripts, or `--yes`) it takes those defaults and prints them. Flags answer a question in advance — flagged choices are never asked:
 

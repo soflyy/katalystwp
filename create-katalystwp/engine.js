@@ -159,7 +159,9 @@ Usage:
   npx ${pkg} [dir] [options]
 
 Arguments:
-  dir                   Target directory (default: current directory)
+  dir                   Target directory. Asked interactively when omitted
+                        (suggested: my-site); non-interactive runs default to
+                        the current directory.
 
 Options:
   --port=NNNN           Host port for WordPress (default: 8080)
@@ -228,7 +230,7 @@ async function loadUserConfig() {
 
 // Interactive chooser — runs only in a real terminal and only for choices not
 // already made via flags. Enter accepts the default on every question.
-async function promptForChoices({ port, askPort, agents, plugins, defaultAgents }) {
+async function promptForChoices({ dir, defaultDir, port, askPort, agents, plugins, defaultAgents }) {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   const keys = Object.keys(AGENTS);
   // A closed stdin (Ctrl+D, or a script that stopped supplying answers) means
@@ -244,6 +246,18 @@ async function promptForChoices({ port, askPort, agents, plugins, defaultAgents 
     }
   };
   try {
+    if (dir == null) {
+      // Re-ask on a non-empty directory so the user doesn't answer everything
+      // else first and only then hit the "not empty" error.
+      for (;;) {
+        const a = await ask(`? Project directory [${defaultDir}]: `);
+        const candidate = a || defaultDir;
+        const existing = await readdir(resolve(candidate)).catch(() => []);
+        const blocking = existing.filter((f) => !ALLOWED_EXISTING.has(f));
+        if (!blocking.length || closed) { dir = candidate; break; }
+        console.log(`  ✖ ${resolve(candidate)} is not empty — pick a new or empty directory.`);
+      }
+    }
     if (askPort) {
       const a = await ask(`? Host port for the WordPress site [${port}]: `);
       if (a) port = a;
@@ -276,7 +290,7 @@ async function promptForChoices({ port, askPort, agents, plugins, defaultAgents 
   } finally {
     rl.close();
   }
-  return { port, agents, plugins };
+  return { dir, port, agents, plugins };
 }
 
 async function copyTemplates(srcDir, destDir, vars) {
@@ -374,9 +388,6 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
     return;
   }
 
-  const targetDir = resolve(args.dir ?? '.');
-  const projectName = basename(targetDir);
-
   // Read & validate the file-backed inputs first, so a bad --setup-script /
   // --dev-script / --defines path fails before we create or write anything.
   const setupScriptContent = args.setupScript
@@ -392,6 +403,38 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
   // the same container port overrides the preset's (see parseAppPorts).
   const appPorts = parseAppPorts([...(preset.appPorts ?? []), ...args.appPorts.map((p) => `${p.host}:${p.container}`)].join(','));
 
+  // ---- choose directory / agents / plugins / port -------------------------
+  // Flags (and the dir argument) decide outright; anything not decided is
+  // asked about in an interactive terminal (unless --yes), and falls back to
+  // defaults otherwise (non-TTY callers — CI, the devbox server — always take
+  // this path; their dir default stays the current directory).
+  const defaultAgents = preset.agents != null ? parseAgentsList(preset.agents.join(','), 'preset.agents') : DEFAULT_AGENTS;
+  let agents = args.agentsRaw != null ? parseAgentsList(args.agentsRaw) : null;
+  let extraPlugins = args.pluginsRaw != null
+    ? args.pluginsRaw.split(',').map((s) => s.trim()).filter(Boolean)
+    : null;
+  let port = String(args.port);
+
+  const undecided = args.dir == null || agents == null || extraPlugins == null || !args.portExplicit;
+  const canPrompt = !args.yes && process.stdin.isTTY && process.stdout.isTTY;
+  if (undecided && canPrompt) {
+    console.log(`\n${pkg} — press Enter to accept a default; --yes skips these questions.\n`);
+    ({ dir: args.dir, port, agents, plugins: extraPlugins } = await promptForChoices({
+      dir: args.dir, defaultDir: 'my-site', port, askPort: !args.portExplicit, agents, plugins: extraPlugins, defaultAgents,
+    }));
+  }
+  agents ??= defaultAgents;
+  extraPlugins ??= [];
+  args.port = port;
+
+  const targetDir = resolve(args.dir ?? '.');
+  const projectName = basename(targetDir);
+
+  console.log(`\n→ Config: directory ${projectName} · port ${port} · agents: ${agents.length ? agents.map((k) => AGENTS[k].label).join(', ') : 'none'} · extra plugins: ${extraPlugins.length ? extraPlugins.join(', ') : 'none'}`);
+  if (undecided && !canPrompt) {
+    console.log('  (defaults — run in an interactive terminal to be asked, or set the dir argument / --port= --agents= --plugins=)');
+  }
+
   await mkdir(targetDir, { recursive: true });
 
   const existing = await readdir(targetDir).catch(() => []);
@@ -402,34 +445,6 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
     console.error('  This scaffolder needs an empty directory. Point it at a new one, e.g.:');
     console.error(`    npm create ${slug}@latest my-site\n`);
     process.exit(1);
-  }
-
-  // ---- choose agents / plugins / port -------------------------------------
-  // Flags decide outright; anything not decided by a flag is asked about in an
-  // interactive terminal (unless --yes), and falls back to defaults otherwise
-  // (non-TTY callers — CI, the devbox server — always take this path).
-  const defaultAgents = preset.agents != null ? parseAgentsList(preset.agents.join(','), 'preset.agents') : DEFAULT_AGENTS;
-  let agents = args.agentsRaw != null ? parseAgentsList(args.agentsRaw) : null;
-  let extraPlugins = args.pluginsRaw != null
-    ? args.pluginsRaw.split(',').map((s) => s.trim()).filter(Boolean)
-    : null;
-  let port = String(args.port);
-
-  const undecided = agents == null || extraPlugins == null || !args.portExplicit;
-  const canPrompt = !args.yes && process.stdin.isTTY && process.stdout.isTTY;
-  if (undecided && canPrompt) {
-    console.log(`\n${pkg} — press Enter to accept a default; --yes skips these questions.\n`);
-    ({ port, agents, plugins: extraPlugins } = await promptForChoices({
-      port, askPort: !args.portExplicit, agents, plugins: extraPlugins, defaultAgents,
-    }));
-  }
-  agents ??= defaultAgents;
-  extraPlugins ??= [];
-  args.port = port;
-
-  console.log(`\n→ Config: port ${port} · agents: ${agents.length ? agents.map((k) => AGENTS[k].label).join(', ') : 'none'} · extra plugins: ${extraPlugins.length ? extraPlugins.join(', ') : 'none'}`);
-  if (undecided && !canPrompt) {
-    console.log('  (defaults — run in an interactive terminal to be asked, or set --port= --agents= --plugins=)');
   }
 
   // User-level defaults (set once in ~/.config/...); fall back to admin/password.
