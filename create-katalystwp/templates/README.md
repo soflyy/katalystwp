@@ -6,7 +6,7 @@ Four services:
 
 - **db** — MariaDB
 - **wordpress** — WordPress on `http://localhost:__WP_PORT__`
-- **workspace** — an isolated dev container (Node + [Claude Code](https://claude.com/claude-code) + [Cursor CLI](https://cursor.com/docs/cli) + PHP + WP-CLI + Composer) that mounts the same WordPress files and reaches the site/DB over the Docker network
+- **workspace** — an isolated dev container (Node + PHP + WP-CLI + Composer + the AI coding agents chosen at scaffold time — see `agents` in `sandbox.config.json`) that mounts the same WordPress files and reaches the site/DB over the Docker network
 - **playwright** — a [Playwright MCP](https://github.com/microsoft/playwright-mcp) server (headless Chromium) that the agents drive to browse the site
 
 All data lives in bind-mounted folders in this directory (`db/` and `workspace/` — the latter holds WordPress at `workspace/wp` plus your checkouts), so it survives restarts and is browsable on your machine. They're git-ignored.
@@ -49,8 +49,18 @@ npm run start     # build + start containers
 | `npm run logs` | Tail logs from all services |
 | `npm run ps` | Show container status |
 | `npm run bash` | Shell into the workspace container (lands in the workspace root `/home/node`, with WordPress at `wp/`) |
+# >>> agent:claude
 | `npm run claude` | Launch Claude Code in the workspace (`--dangerously-skip-permissions`, safe because it's contained) |
+# <<< agent:claude
+# >>> agent:cursor
 | `npm run cursor` | Launch the Cursor CLI agent in the workspace (`--force --approve-mcps`, safe because it's contained) |
+# <<< agent:cursor
+# >>> agent:codex
+| `npm run codex` | Launch OpenAI Codex in the workspace |
+# <<< agent:codex
+# >>> agent:opencode
+| `npm run opencode` | Launch OpenCode in the workspace |
+# <<< agent:opencode
 | `npm run wp` | Run WP-CLI, e.g. `npm run wp -- plugin list` |
 | `npm run reset` | ⚠️ Wipe all data and rebuild from scratch |
 
@@ -85,10 +95,14 @@ A bare string is shorthand for `{ "source": "<string>", "activate": true }`. Aft
   wp plugin activate my-plugin
   ```
   The workspace root is mounted into the wordpress container at the same path, so Apache follows the symlink and serves the plugin live.
+# >>> agent:claude
 - **Claude login (auto):** `npm run claude` resolves your Claude token and logs you in automatically — no `/login`, landing straight at the prompt. It looks for the token in this order: `$CLAUDE_CODE_OAUTH_TOKEN` in your shell, then `$CLAUDE_SANDBOX_TOKEN_FILE`, then `~/.agent-sandbox/oauth-token` (the same file the standalone [agent-sandbox](https://github.com/louisreingold/agent-sandbox) uses — mint one on your host with `claude setup-token`). The token is forwarded by name (`docker compose exec -e CLAUDE_CODE_OAUTH_TOKEN`), so its value never lands on the command line, and the workspace's entrypoint pre-clears Claude's three first-run gates (login-method picker, `--dangerously-skip-permissions` warning, "trust this folder?" dialog) so an authenticated session isn't stopped by any onboarding screen. No token anywhere? Claude just starts and you `/login` once; that login persists in `workspace/` across rebuilds.
+# <<< agent:claude
+# >>> agent:cursor
 - **Cursor login (auto):** `npm run cursor` resolves your Cursor API key the same way: `$CURSOR_API_KEY` in your shell, then `$CURSOR_API_KEY_FILE`, then `~/.agent-sandbox/cursor-api-key` (one line — generate a key in the Cursor dashboard under **Settings → API Keys**). It's forwarded by name (`docker compose exec -e CURSOR_API_KEY`), so the value never lands on the command line, and Cursor launches with `--force --approve-mcps` so it auto-approves commands and the sandbox's MCP servers — safe because the container is a throwaway sandbox. No key anywhere? Cursor starts unauthenticated and you can `cursor-agent login` once; that login persists in `workspace/` across rebuilds.
+# <<< agent:cursor
 - **WordPress MCP helper:** the workspace ships a small CLI, `cursor-wp-mcp-helper` (also at `/home/node/bin/cursor-wp-mcp-helper`), that calls the site's WordPress MCP server over HTTP — handy for an agent whose chat doesn't surface the native MCP tools. It reads the endpoint + credentials from `~/.cursor/mcp.json` (no baked secrets), e.g. `cursor-wp-mcp-helper discover`, `cursor-wp-mcp-helper php-eval 'return get_bloginfo("name");'`. The bundled `cursor-wp-mcp-helper` skill documents it for agents.
 - **WP-CLI** talks to the database automatically over the Docker network.
-- **MCP:** `npm run setup` connects **both** Claude and Cursor to two MCP servers automatically (Claude at user scope — `claude mcp list` shows them; Cursor via `~/.cursor/mcp.json`; re-add or tweak either with `bash scripts/connect-mcp.sh`):
-  - **wordpress** — the site's MCP server, provided by [Agent Connector for WP](https://github.com/soflyy/agent-connector-for-wp) (which bundles [`mcp-adapter`](https://github.com/WordPress/mcp-adapter) and registers its abilities through WordPress core's Abilities API, in core as of WordPress 7.0). Setup installs and enables it, then registers it with both agents through [Automattic's `mcp-wordpress-remote`](https://www.npmjs.com/package/@automattic/mcp-wordpress-remote) — a small stdio proxy run via `npx` that connects to the site's MCP endpoint (`http://wordpress/wp-json/mcp/mcp-adapter-default-server`) and authenticates with a WordPress Application Password setup mints for `admin`. It exposes root-equivalent abilities (shell, WP-CLI, PHP eval, filesystem) — but the workspace already has WP-CLI and direct filesystem access to `wp/`, so the agents prefer those and only reach for this when they need code to run inside the **live WordPress runtime** (e.g. PHP eval with plugins and hooks loaded). Fine to expose because this is a trusted, throwaway dev sandbox.
+- **MCP:** `npm run setup` connects every installed agent to two MCP servers automatically (Claude at user scope — `claude mcp list` shows them; Cursor via `~/.cursor/mcp.json`; Codex via `~/.codex/config.toml`; OpenCode via `~/.config/opencode/opencode.json`; re-add or tweak with `bash scripts/connect-mcp.sh`):
+  - **wordpress** — the site's MCP server, provided by [Agent Connector for WP](https://github.com/soflyy/agent-connector-for-wp) (which bundles [`mcp-adapter`](https://github.com/WordPress/mcp-adapter) and registers its abilities through WordPress core's Abilities API, in core as of WordPress 7.0). Setup installs and enables it, then registers it with the installed agents through [Automattic's `mcp-wordpress-remote`](https://www.npmjs.com/package/@automattic/mcp-wordpress-remote) — a small stdio proxy run via `npx` that connects to the site's MCP endpoint (`http://wordpress/wp-json/mcp/mcp-adapter-default-server`) and authenticates with a WordPress Application Password setup mints for `admin`. It exposes root-equivalent abilities (shell, WP-CLI, PHP eval, filesystem) — but the workspace already has WP-CLI and direct filesystem access to `wp/`, so the agents prefer those and only reach for this when they need code to run inside the **live WordPress runtime** (e.g. PHP eval with plugins and hooks loaded). Fine to expose because this is a trusted, throwaway dev sandbox.
   - **playwright** — the [Playwright MCP](https://github.com/microsoft/playwright-mcp) server (a separate container with headless Chromium), over HTTP. The agents use it to navigate, click, and screenshot the site. **From the browser, the site is `http://wordpress`** (the Docker-network address), not `localhost:__WP_PORT__` — the site URL is derived from the request host so both work without redirects.

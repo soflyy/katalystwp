@@ -12,6 +12,7 @@ import { dirname, join, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
+import { createInterface } from 'node:readline/promises';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TEMPLATES = join(HERE, 'templates');
@@ -33,10 +34,51 @@ const ALLOWED_EXISTING = new Set([
   'LICENSE', 'LICENSE.md', 'README.md',
 ]);
 
+// The AI coding agents that CAN be installed into the workspace container.
+// Only the ones the user selects (interactively or via --agents) are installed
+// — nothing is baked in unasked. `pkg` is the npm package installed in
+// workspace.Dockerfile; Cursor uses its own installer (see the
+// ">>> agent:cursor" section there). Each key doubles as the generated
+// project's npm script name (`npm run claude`, …) and as a section marker
+// name in the Dockerfile template.
+export const AGENTS = {
+  claude:   { label: 'Claude Code', pkg: '@anthropic-ai/claude-code' },
+  cursor:   { label: 'Cursor CLI' },
+  codex:    { label: 'Codex CLI', pkg: '@openai/codex' },
+  opencode: { label: 'OpenCode', pkg: 'opencode-ai' },
+};
+const DEFAULT_AGENTS = ['claude'];
+
+// Parse an agents list ("claude,cursor", "all", "none"). Used by --agents and
+// by preset.agents. Throws on unknown names so typos fail loudly.
+function parseAgentsList(raw, source = '--agents') {
+  const items = String(raw).split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+  if (!items.length || items.includes('none')) return [];
+  if (items.includes('all')) return Object.keys(AGENTS);
+  const bad = items.filter((i) => !AGENTS[i]);
+  if (bad.length) {
+    throw new Error(`${source}: unknown agent(s): ${bad.join(', ')}. Valid: ${Object.keys(AGENTS).join(', ')}, all, none.`);
+  }
+  return [...new Set(items)];
+}
+
+// Strip or keep "# >>> agent:<name> … # <<< agent:<name>" sections in a
+// template based on the selected agents. The marker lines themselves never
+// reach the output.
+function applyAgentSections(content, agents) {
+  return content.replace(
+    /[ \t]*# >>> agent:(\w+)\n([\s\S]*?)[ \t]*# <<< agent:\1\n/g,
+    (_, name, body) => (agents.includes(name) ? body : ''),
+  );
+}
+
 function parseArgs(argv) {
-  const out = { dir: null, port: '8080', setup: true, setupScript: null, defines: null, activate: [], devScript: null, devCommand: null, appPorts: [], publicHost: 'localhost' };
+  const out = { dir: null, port: '8080', portExplicit: false, setup: true, setupScript: null, defines: null, activate: [], devScript: null, devCommand: null, appPorts: [], publicHost: 'localhost', agentsRaw: null, pluginsRaw: null, yes: false };
   for (const a of argv) {
-    if (a.startsWith('--port=')) out.port = a.slice('--port='.length);
+    if (a.startsWith('--port=')) { out.port = a.slice('--port='.length); out.portExplicit = true; }
+    else if (a.startsWith('--agents=')) out.agentsRaw = a.slice('--agents='.length);
+    else if (a.startsWith('--plugins=')) out.pluginsRaw = a.slice('--plugins='.length);
+    else if (a === '--yes' || a === '-y') out.yes = true;
     else if (a.startsWith('--setup-script=')) out.setupScript = a.slice('--setup-script='.length);
     else if (a.startsWith('--dev-script=')) out.devScript = a.slice('--dev-script='.length);
     else if (a.startsWith('--dev-command=')) out.devCommand = a.slice('--dev-command='.length);
@@ -121,6 +163,14 @@ Arguments:
 
 Options:
   --port=NNNN           Host port for WordPress (default: 8080)
+  --agents=LIST         AI coding agents to install in the workspace, comma-
+                        separated: ${Object.keys(AGENTS).join(', ')} — or
+                        'all' / 'none'. Default: claude (Claude Code).
+  --plugins=LIST        WordPress plugins to pre-install, comma-separated
+                        wordpress.org slugs or .zip URLs.
+  --yes, -y             Accept defaults; never prompt. (Prompts only appear in
+                        an interactive terminal anyway — CI and scripts are
+                        always non-interactive.)
   --setup-script=PATH   Shell script to run inside the workspace (as node) on
                         first setup — e.g. clone a repo and run its installer.
   --dev-script=PATH     Shell script run (as node) in its own long-running 'dev'
@@ -176,6 +226,59 @@ async function loadUserConfig() {
   return {};
 }
 
+// Interactive chooser — runs only in a real terminal and only for choices not
+// already made via flags. Enter accepts the default on every question.
+async function promptForChoices({ port, askPort, agents, plugins, defaultAgents }) {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const keys = Object.keys(AGENTS);
+  // A closed stdin (Ctrl+D, or a script that stopped supplying answers) means
+  // "accept the defaults for everything else", never a crash.
+  let closed = false;
+  const ask = async (q) => {
+    if (closed) return '';
+    try {
+      return (await rl.question(q)).trim();
+    } catch {
+      closed = true;
+      return '';
+    }
+  };
+  try {
+    if (askPort) {
+      const a = await ask(`? Host port for the WordPress site [${port}]: `);
+      if (a) port = a;
+    }
+    if (agents == null) {
+      console.log('? AI coding agents to install in the workspace:');
+      keys.forEach((k, i) => console.log(`    ${i + 1}) ${AGENTS[k].label}`));
+      console.log(`    ${keys.length + 1}) All of the above`);
+      console.log('    0) None — plain workspace (Node, PHP, WP-CLI, MCP servers)');
+      const def = defaultAgents.map((k) => keys.indexOf(k) + 1).join(',') || '0';
+      for (;;) {
+        const raw = await ask(`  Numbers, comma-separated [${def} — ${defaultAgents.map((k) => AGENTS[k].label).join(', ') || 'none'}]: `);
+        if (!raw) { agents = [...defaultAgents]; break; }
+        if (raw === '0' || /^none$/i.test(raw)) { agents = []; break; }
+        if (raw === String(keys.length + 1) || /^all$/i.test(raw)) { agents = keys; break; }
+        const picked = [];
+        let ok = true;
+        for (const tok of raw.split(',').map((s) => s.trim()).filter(Boolean)) {
+          const k = /^\d+$/.test(tok) ? keys[parseInt(tok, 10) - 1] : keys.find((x) => x === tok.toLowerCase());
+          if (!k) { console.log(`  ✖ "${tok}" isn't a choice — enter numbers 0-${keys.length + 1} or agent names.`); ok = false; break; }
+          if (!picked.includes(k)) picked.push(k);
+        }
+        if (ok) { agents = picked; break; }
+      }
+    }
+    if (plugins == null) {
+      const raw = await ask('? WordPress plugins to pre-install — wordpress.org slugs or .zip URLs, comma-separated [none]: ');
+      plugins = raw ? raw.split(',').map((s) => s.trim()).filter(Boolean) : [];
+    }
+  } finally {
+    rl.close();
+  }
+  return { port, agents, plugins };
+}
+
 async function copyTemplates(srcDir, destDir, vars) {
   for (const entry of await readdir(srcDir, { withFileTypes: true })) {
     if (SKIP_TEMPLATES.has(entry.name)) continue;
@@ -185,11 +288,12 @@ async function copyTemplates(srcDir, destDir, vars) {
       await mkdir(dest, { recursive: true });
       await copyTemplates(src, dest, vars);
     } else {
-      const rendered = (await readFile(src, 'utf8'))
+      const rendered = applyAgentSections(await readFile(src, 'utf8'), vars.agents)
         .replaceAll('__PROJECT_NAME__', vars.projectName)
         .replaceAll('__WP_PORT__', vars.port)
         .replaceAll('__PUBLIC_HOST__', vars.publicHost)
         .replaceAll('__APP_PORTS__', vars.appPortsBlock)
+        .replaceAll('__AGENT_NPM_PKGS__', vars.agentNpmPkgs)
         .replaceAll('__WP_ADMIN_USER__', vars.wpAdminUser)
         .replaceAll('__WP_ADMIN_PASSWORD__', vars.wpAdminPassword)
         .replaceAll('__WP_ADMIN_EMAIL__', vars.wpAdminEmail);
@@ -208,6 +312,9 @@ async function copyTemplates(srcDir, destDir, vars) {
 async function applyConfig(targetDir, extra) {
   const cfgPath = join(targetDir, 'sandbox.config.json');
   const cfg = JSON.parse(await readFile(cfgPath, 'utf8'));
+  // Which agents this sandbox was scaffolded with — informational (the actual
+  // installs are baked into workspace.Dockerfile at scaffold time).
+  cfg.agents = extra.agents ?? [];
   if (extra.plugins?.length) cfg.plugins = [...(cfg.plugins ?? []), ...extra.plugins];
   if (extra.activate?.length) cfg.activate = [...(cfg.activate ?? []), ...extra.activate];
   if (extra.defines && Object.keys(extra.defines).length) {
@@ -245,6 +352,9 @@ async function readDefinesFile(path) {
  * @param {string} [options.preset.name]       Short name, e.g. "oxygen-wp" — only used to
  *                                             print the right `npm create <name>` in messages.
  * @param {Array}  [options.preset.plugins]    Extra plugins appended to the defaults.
+ * @param {string[]} [options.preset.agents]   Default agents for this brand (keys of AGENTS,
+ *                                             e.g. ['claude']) — the user can still override
+ *                                             interactively or with --agents.
  * @param {string[]} [options.preset.activate] Plugin slugs to activate (in order) after the setup script.
  * @param {object} [options.preset.defines]    { NAME: value } constants written into wp-config.php.
  * @param {string} [options.preset.setupScript] Shell-script contents run inside the workspace on setup.
@@ -294,10 +404,40 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
     process.exit(1);
   }
 
+  // ---- choose agents / plugins / port -------------------------------------
+  // Flags decide outright; anything not decided by a flag is asked about in an
+  // interactive terminal (unless --yes), and falls back to defaults otherwise
+  // (non-TTY callers — CI, the devbox server — always take this path).
+  const defaultAgents = preset.agents != null ? parseAgentsList(preset.agents.join(','), 'preset.agents') : DEFAULT_AGENTS;
+  let agents = args.agentsRaw != null ? parseAgentsList(args.agentsRaw) : null;
+  let extraPlugins = args.pluginsRaw != null
+    ? args.pluginsRaw.split(',').map((s) => s.trim()).filter(Boolean)
+    : null;
+  let port = String(args.port);
+
+  const undecided = agents == null || extraPlugins == null || !args.portExplicit;
+  const canPrompt = !args.yes && process.stdin.isTTY && process.stdout.isTTY;
+  if (undecided && canPrompt) {
+    console.log(`\n${pkg} — press Enter to accept a default; --yes skips these questions.\n`);
+    ({ port, agents, plugins: extraPlugins } = await promptForChoices({
+      port, askPort: !args.portExplicit, agents, plugins: extraPlugins, defaultAgents,
+    }));
+  }
+  agents ??= defaultAgents;
+  extraPlugins ??= [];
+  args.port = port;
+
+  console.log(`\n→ Config: port ${port} · agents: ${agents.length ? agents.map((k) => AGENTS[k].label).join(', ') : 'none'} · extra plugins: ${extraPlugins.length ? extraPlugins.join(', ') : 'none'}`);
+  if (undecided && !canPrompt) {
+    console.log('  (defaults — run in an interactive terminal to be asked, or set --port= --agents= --plugins=)');
+  }
+
   // User-level defaults (set once in ~/.config/...); fall back to admin/password.
   const userConfig = await loadUserConfig();
   await copyTemplates(TEMPLATES, targetDir, {
     projectName,
+    agents,
+    agentNpmPkgs: agents.map((k) => AGENTS[k].pkg).filter(Boolean).map((p) => p + ' ').join(''),
     port: String(args.port),
     publicHost: args.publicHost,
     appPortsBlock: renderAppPortsBlock(appPorts),
@@ -305,6 +445,17 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
     wpAdminPassword: userConfig.wpAdminPassword || 'password',
     wpAdminEmail: userConfig.wpAdminEmail || 'admin@example.com',
   });
+
+  // Drop the npm scripts for agents that aren't installed in this sandbox
+  // (`npm run claude` when Claude Code isn't in the image would just error).
+  {
+    const pkgPath = join(targetDir, 'package.json');
+    const pkgJson = JSON.parse(await readFile(pkgPath, 'utf8'));
+    for (const key of Object.keys(AGENTS)) {
+      if (!agents.includes(key)) delete pkgJson.scripts[key];
+    }
+    await writeFile(pkgPath, JSON.stringify(pkgJson, null, 2) + '\n');
+  }
 
   // A setup script (CLI --setup-script, or a preset's inline script) is copied
   // into the project's scripts/ so the generated project is self-contained — it
@@ -328,7 +479,8 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
   }
 
   await applyConfig(targetDir, {
-    plugins: preset.plugins ?? [],
+    agents,
+    plugins: [...(preset.plugins ?? []), ...extraPlugins],
     activate: [...(preset.activate ?? []), ...args.activate],
     defines: { ...(preset.defines ?? {}), ...(cliDefines ?? {}) },
     setupScript: setupScriptRel,
@@ -359,6 +511,9 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
   }
 
   const cd = args.dir ? args.dir : '.';
+  // One aligned "npm run <agent>  # launch <label> in the workspace" line per
+  // selected agent, reused in both the scaffold-only and post-setup messages.
+  const agentRunLines = agents.map((k) => `${`  npm run ${k}`.padEnd(23)}# launch ${AGENTS[k].label} in the workspace`);
   console.log(`\n✔ Scaffolded WordPress + agent sandbox in ${targetDir}\n`);
 
   if (!args.setup) {
@@ -366,8 +521,7 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
     console.log(`  cd ${cd}`);
     console.log('  npm run setup        # build, start & install WordPress + plugins (Docker must be running)');
     console.log('  npm run start        # subsequent runs: just bring the containers up');
-    console.log('  npm run claude       # launch Claude Code in the workspace');
-    console.log('  npm run cursor       # launch the Cursor CLI agent in the workspace');
+    for (const l of agentRunLines) console.log(l);
     console.log('');
     console.log(`Once setup finishes, your site is at http://${args.publicHost}:${args.port} — log in at /wp-admin with admin / password (default; set WP_ADMIN_USER / WP_ADMIN_PASSWORD in .env to change).`);
     return;
@@ -386,8 +540,7 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
   console.log('\nEveryday commands:');
   console.log(`  cd ${cd}`);
   console.log('  npm run start        # bring the stack up next time (it stays up otherwise)');
-  console.log('  npm run claude       # launch Claude Code in the workspace');
-  console.log('  npm run cursor       # launch the Cursor CLI agent in the workspace');
+  for (const l of agentRunLines) console.log(l);
   console.log('  npm run bash         # shell into the workspace container');
   if (devScriptRel) {
     console.log('  npm run dev:logs     # follow the dev script running in the dev container');

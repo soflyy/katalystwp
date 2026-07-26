@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
-# Connect the workspace's agents (Claude Code, Codex, and Cursor) to the MCP
-# servers in this sandbox, so all can use them out of the box. Idempotent — re-run safe.
-# Run via `npm run setup`.
+# Connect whichever workspace agents are installed (Claude Code, Cursor, Codex,
+# OpenCode — the set chosen at scaffold time) to the MCP servers in this
+# sandbox, so they can use them out of the box. Agents that aren't installed are
+# skipped. Idempotent — re-run safe. Run via `npm run setup`.
 #
 #   - wordpress: the site's MCP server (Agent Connector for WP, which bundles
 #     mcp-adapter), reached through Automattic's mcp-wordpress-remote stdio proxy
@@ -50,20 +51,28 @@ if [ "$HAS_WP" = "1" ]; then
   # and mint a fresh one — the plaintext is only available at creation time.
   wp user application-password delete "$ADMIN_USER" --all >/dev/null 2>&1 || true
   APPPASS=$(wp user application-password create "$ADMIN_USER" "agent-sandbox" --porcelain)
-
-  echo "→ Connecting Claude to the WordPress MCP server (mcp-wordpress-remote proxy)…"
-  claude mcp remove wordpress --scope user >/dev/null 2>&1 || true
-  claude mcp add wordpress --scope user \
-    --env WP_API_URL="$WP_MCP_URL" \
-    --env WP_API_USERNAME="$ADMIN_USER" \
-    --env WP_API_PASSWORD="$APPPASS" \
-    --env OAUTH_ENABLED=false \
-    -- npx -y @automattic/mcp-wordpress-remote
 fi
 
-echo "→ Connecting Claude to the Playwright MCP server…"
-claude mcp remove playwright --scope user >/dev/null 2>&1 || true
-claude mcp add playwright --scope user --transport http "$PLAYWRIGHT_URL"
+# Each agent below is configured only when its CLI is actually installed — this
+# sandbox may have been scaffolded with any subset of them (--agents).
+if command -v claude >/dev/null 2>&1; then
+  if [ "$HAS_WP" = "1" ]; then
+    echo "→ Connecting Claude to the WordPress MCP server (mcp-wordpress-remote proxy)…"
+    claude mcp remove wordpress --scope user >/dev/null 2>&1 || true
+    claude mcp add wordpress --scope user \
+      --env WP_API_URL="$WP_MCP_URL" \
+      --env WP_API_USERNAME="$ADMIN_USER" \
+      --env WP_API_PASSWORD="$APPPASS" \
+      --env OAUTH_ENABLED=false \
+      -- npx -y @automattic/mcp-wordpress-remote
+  fi
+
+  echo "→ Connecting Claude to the Playwright MCP server…"
+  claude mcp remove playwright --scope user >/dev/null 2>&1 || true
+  claude mcp add playwright --scope user --transport http "$PLAYWRIGHT_URL"
+else
+  echo "→ claude not installed in this sandbox — skipping Claude MCP setup."
+fi
 
 # Cursor reads ~/.cursor/mcp.json (same servers, its own format). Merge into any
 # existing file so a manual login or other servers aren't clobbered. The proxy
@@ -71,6 +80,9 @@ claude mcp add playwright --scope user --transport http "$PLAYWRIGHT_URL"
 # Non-fatal: if the home dir isn't writable (e.g. a root-owned /home/node from
 # scaffolding as a non-1000 host user), warn and continue rather than aborting
 # setup — Claude registration above is independent.
+if ! command -v cursor-agent >/dev/null 2>&1; then
+  echo "→ cursor-agent not installed in this sandbox — skipping Cursor MCP setup."
+else
 echo "→ Connecting Cursor to the MCP servers (~/.cursor/mcp.json)…"
 if HAS_WP="$HAS_WP" APPPASS="$APPPASS" WP_API_USERNAME="$ADMIN_USER" WP_MCP_URL="$WP_MCP_URL" PLAYWRIGHT_URL="$PLAYWRIGHT_URL" node -e '
   const fs = require("fs"), os = require("os"), path = require("path");
@@ -97,11 +109,12 @@ if HAS_WP="$HAS_WP" APPPASS="$APPPASS" WP_API_USERNAME="$ADMIN_USER" WP_MCP_URL=
   c.mcpServers.playwright = { url: process.env.PLAYWRIGHT_URL };
   fs.writeFileSync(p, JSON.stringify(c, null, 2) + "\n");
 '; then
-  echo "✓ MCP servers registered for Claude ('claude mcp list') and Cursor (~/.cursor/mcp.json)."
+  echo "✓ Cursor MCP servers registered (~/.cursor/mcp.json)."
 else
   echo "⚠ Could not write ~/.cursor/mcp.json (is /home/node writable by the node user?)." >&2
-  echo "  Skipping Cursor's MCP setup — Claude is registered and unaffected. Fix the" >&2
+  echo "  Skipping Cursor's MCP setup — the other agents are unaffected. Fix the" >&2
   echo "  workspace/ ownership (it must be uid 1000) and re-run: bash scripts/connect-mcp.sh" >&2
+fi
 fi
 
 # Codex (~/.codex/config.toml, via `codex mcp add`). Same servers as above. Skipped
@@ -174,4 +187,4 @@ else
 fi
 EOF
 
-echo "✓ Run 'npm run claude' or 'npm run cursor' and use the MCP servers right away."
+echo "✓ MCP setup done — the installed agents can use the servers right away."

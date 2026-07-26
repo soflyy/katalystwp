@@ -16,19 +16,28 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 if [ -d skills ] && [ -n "$(ls -A skills 2>/dev/null)" ]; then
-  for dest in workspace/.claude/skills workspace/.cursor/skills; do
+  # Only into the skills dirs of agents actually installed in this sandbox
+  # (the set chosen at scaffold time via --agents).
+  dests=""
+  docker compose exec -T workspace sh -c 'command -v claude' >/dev/null 2>&1 && dests="$dests workspace/.claude/skills"
+  docker compose exec -T workspace sh -c 'command -v cursor-agent' >/dev/null 2>&1 && dests="$dests workspace/.cursor/skills"
+  for dest in $dests; do
     mkdir -p "$dest"
     cp -R skills/. "$dest"/
   done
-  # The host-side copy above is owned by whoever ran `npm run setup` — which is
-  # root when this runs under the devbox control server. The agents run as the
-  # node user (uid 1000) and need to add/symlink their OWN skills at runtime, so
-  # hand the skill dirs to node. Done inside the container as root so it works
-  # regardless of the host user's uid. Non-fatal (container may be down on a
-  # standalone re-run).
-  docker compose exec -T -u root workspace \
-    chown -R node:node /home/node/.claude/skills /home/node/.cursor/skills >/dev/null 2>&1 || true
-  echo "✓ Skills installed into the workspace (~/.claude/skills and ~/.cursor/skills)."
+  if [ -n "$dests" ]; then
+    # The host-side copy above is owned by whoever ran `npm run setup` — which is
+    # root when this runs under the devbox control server. The agents run as the
+    # node user (uid 1000) and need to add/symlink their OWN skills at runtime, so
+    # hand the skill dirs to node. Done inside the container as root so it works
+    # regardless of the host user's uid. Non-fatal (container may be down on a
+    # standalone re-run).
+    docker compose exec -T -u root workspace \
+      chown -R node:node /home/node/.claude/skills /home/node/.cursor/skills >/dev/null 2>&1 || true
+    echo "✓ Skills installed into the workspace ($(echo $dests | sed 's|workspace/|~/|g; s| |, |g'))."
+  else
+    echo "→ No skill-capable agents (Claude Code / Cursor) in this sandbox — skipping skills."
+  fi
 else
   echo "→ No skills/ to install — skipping."
 fi

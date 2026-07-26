@@ -7,8 +7,11 @@
  * and plugin install). Pass --scaffold-only to write files and skip Docker.
  *
  * Usage:
- *   npm create katalystwp -- [dir] [--port=8080] [--setup-script=PATH] [--dev-script=PATH] [--defines=PATH] [--activate=a,b,c] [--scaffold-only]
- *   npx create-katalystwp [dir] [--port=8080] [--setup-script=PATH] [--dev-script=PATH] [--defines=PATH] [--activate=a,b,c] [--scaffold-only]
+ *   npm create katalystwp -- [dir] [--port=8080] [--agents=claude,cursor|all|none] [--plugins=a,b] [--yes] [--setup-script=PATH] [--dev-script=PATH] [--defines=PATH] [--activate=a,b,c] [--scaffold-only]
+ *   npx create-katalystwp [dir] [...same flags]
+ *
+ * In an interactive terminal, choices not covered by flags are asked as
+ * questions (port / agents / plugins); otherwise defaults apply.
  *
  * The scaffolding logic lives in engine.js, which is also exported for
  * downstream `create-<brand>` packages — see the README.

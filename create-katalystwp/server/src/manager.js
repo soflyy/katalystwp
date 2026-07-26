@@ -164,6 +164,10 @@ export class Manager {
         join(config.scaffolderDir, 'index.js'),
         record.dir,
         `--port=${record.port}`,
+        // The server's sessions can drive any of the supported agents (model
+        // chooser: Claude, Codex, OpenCode; SSH: Cursor), so install them all —
+        // the scaffolder's default is Claude-only.
+        '--agents=all',
         `--public-host=${config.publicHost}`,
         ...(record.appPorts?.length ? [`--app-ports=${record.appPorts.map((p) => `${p.host}:${p.container}`).join(',')}`] : []),
         ...(provisionPlan ? provisionPlan.args : []),
