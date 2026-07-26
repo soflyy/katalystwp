@@ -1,4 +1,4 @@
-# create-wp-local-dev-agent-sandbox
+# create-katalystwp
 
 Scaffold a local **WordPress + AI-agent** development environment (Docker Compose) — WordPress + MariaDB plus an isolated **workspace** container with Node, [Claude Code](https://claude.com/claude-code), the [Cursor CLI](https://cursor.com/docs/cli), PHP, and WP-CLI ready to go.
 
@@ -8,27 +8,27 @@ It scaffolds the project **and runs the initial setup** for you — `docker comp
 
 ```bash
 # npm create form (the create- prefix enables this):
-npm create wp-local-dev-agent-sandbox@latest my-site
+npm create katalystwp@latest my-site
 
 # or directly with npx:
-npx create-wp-local-dev-agent-sandbox my-site
+npx create-katalystwp my-site
 
 # choose a host port (default 8080):
-npx create-wp-local-dev-agent-sandbox my-site --port=8090
+npx create-katalystwp my-site --port=8090
 
 # run a setup script in the workspace, add wp-config constants, and activate
 # plugins (in order) it drops into wp-content — see "Customizing setup" below:
-npx create-wp-local-dev-agent-sandbox my-site \
+npx create-katalystwp my-site \
   --setup-script=./setup.sh \
   --defines=./defines.json \
   --activate=oxygen-elements,breakdance-elements,breakdance-main
 
 # just write files, don't touch Docker:
-npx create-wp-local-dev-agent-sandbox my-site --scaffold-only
+npx create-katalystwp my-site --scaffold-only
 ```
 
 > Through `npm create`, put the flags after `--`, e.g.
-> `npm create wp-local-dev-agent-sandbox@latest my-site -- --port=8090`.
+> `npm create katalystwp@latest my-site -- --port=8090`.
 
 Docker must be running. When it finishes you have a live site at **http://localhost:8080** — log in at `/wp-admin` with `admin` / `password` (the default; configurable in `.env` via `WP_ADMIN_USER` / `WP_ADMIN_PASSWORD`). Then:
 
@@ -69,7 +69,7 @@ WordPress data, the database, and the workspace home are bind-mounted into `wp/`
 Beyond the bundled plugins, you can run a one-time setup script, add `wp-config.php` constants, activate plugins in a chosen order, and keep a long-running dev script (a watcher, say) alive alongside the stack. These are flags on the create command, persisted into the project's `sandbox.config.json` (and, for the dev service, a generated `docker-compose.override.yml`), so they re-apply on `npm run setup` / `npm run reset` — the project stays self-contained.
 
 ```bash
-npx create-wp-local-dev-agent-sandbox my-site \
+npx create-katalystwp my-site \
   --port=8090 \
   --setup-script=./setup.sh \
   --dev-script=./dev.sh \
@@ -149,7 +149,7 @@ The flags above just write into this file; you can also edit it directly and `np
 
 ## User config (defaults for every sandbox)
 
-Set defaults once and they apply to every project you scaffold (and every environment the devbox server creates) — at `~/.config/create-wp-local-dev-agent-sandbox/config.json` (or `$XDG_CONFIG_HOME/...`):
+Set defaults once and they apply to every project you scaffold (and every environment the devbox server creates) — at `~/.config/create-katalystwp/config.json` (or `$XDG_CONFIG_HOME/...`):
 
 ```json
 {
@@ -170,14 +170,14 @@ This package is also a library. If you ship a WordPress plugin (or a stack of th
    ```bash
    mkdir create-oxygen-wp && cd create-oxygen-wp
    npm init -y
-   npm install create-wp-local-dev-agent-sandbox
+   npm install create-katalystwp
    ```
 
 2. Point its `bin` at a one-file script that calls `create()` with a preset. A preset adds plugins — each entry is a wordpress.org slug, or `{ source, activate?, version? }` where `source` is a slug or a URL/path to a `.zip` (the same format the generated project's `sandbox.config.json` uses):
 
    ```js
    #!/usr/bin/env node
-   import { create } from 'create-wp-local-dev-agent-sandbox';
+   import { create } from 'create-katalystwp';
 
    create({
      preset: {
@@ -194,7 +194,7 @@ This package is also a library. If you ship a WordPress plugin (or a stack of th
      "name": "create-oxygen-wp",
      "type": "module",
      "bin": { "create-oxygen-wp": "index.js" },
-     "dependencies": { "create-wp-local-dev-agent-sandbox": "^0.3.0" }
+     "dependencies": { "create-katalystwp": "^0.7.0" }
    }
    ```
 

@@ -112,17 +112,17 @@ What `--apply` does, in order:
 - In the UI, open a couple of environments and confirm their sites load and the
   session transcripts are intact.
 - `df -h /` should show the ~70 GB freed *after* you remove the old copy.
-- When satisfied: `sudo rm -rf /root/dev/create-wp-local-dev-agent-sandbox/server/data.old`
+- When satisfied: `sudo rm -rf /root/dev/create-katalystwp/server/data.old`
 
 ### Rollback (if `/host` looks wrong before you delete `.old`)
 
 ```bash
 sudo systemctl stop devbox-server
-sudo umount /root/dev/create-wp-local-dev-agent-sandbox/server/data
-sudo rmdir  /root/dev/create-wp-local-dev-agent-sandbox/server/data
-sudo sed -i '\# /root/dev/create-wp-local-dev-agent-sandbox/server/data #d' /etc/fstab   # remove the bind line
-sudo mv /root/dev/create-wp-local-dev-agent-sandbox/server/data.old \
-        /root/dev/create-wp-local-dev-agent-sandbox/server/data
+sudo umount /root/dev/create-katalystwp/server/data
+sudo rmdir  /root/dev/create-katalystwp/server/data
+sudo sed -i '\# /root/dev/create-katalystwp/server/data #d' /etc/fstab   # remove the bind line
+sudo mv /root/dev/create-katalystwp/server/data.old \
+        /root/dev/create-katalystwp/server/data
 sudo systemctl start devbox-server
 ```
 

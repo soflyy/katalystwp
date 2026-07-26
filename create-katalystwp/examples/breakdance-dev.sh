@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Sample --dev-script for create-wp-local-dev-agent-sandbox.
+# Sample --dev-script for create-katalystwp.
 #
 # It runs in the long-lived `dev` container (as `node`, with the same /home/node
 # mount as the workspace), kept alive by dev-supervisor for as long as the stack
@@ -8,7 +8,7 @@
 # script cloned at /home/node/breakdance.
 #
 # Pairs with breakdance-setup.sh:
-#   npm create wp-local-dev-agent-sandbox@latest my-breakdance -- \
+#   npm create katalystwp@latest my-breakdance -- \
 #     --port=8090 \
 #     --setup-script=./examples/breakdance-setup.sh \
 #     --dev-script=./examples/breakdance-dev.sh \

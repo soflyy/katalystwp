@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 /**
- * create-wp-local-dev-agent-sandbox
+ * create-katalystwp
  *
  * Scaffolds a local WordPress + AI-agent dev environment (Docker Compose) into
  * a target directory, then runs `npm run setup` (docker compose up + WordPress
  * and plugin install). Pass --scaffold-only to write files and skip Docker.
  *
  * Usage:
- *   npm create wp-local-dev-agent-sandbox -- [dir] [--port=8080] [--setup-script=PATH] [--dev-script=PATH] [--defines=PATH] [--activate=a,b,c] [--scaffold-only]
- *   npx create-wp-local-dev-agent-sandbox [dir] [--port=8080] [--setup-script=PATH] [--dev-script=PATH] [--defines=PATH] [--activate=a,b,c] [--scaffold-only]
+ *   npm create katalystwp -- [dir] [--port=8080] [--setup-script=PATH] [--dev-script=PATH] [--defines=PATH] [--activate=a,b,c] [--scaffold-only]
+ *   npx create-katalystwp [dir] [--port=8080] [--setup-script=PATH] [--dev-script=PATH] [--defines=PATH] [--activate=a,b,c] [--scaffold-only]
  *
  * The scaffolding logic lives in engine.js, which is also exported for
  * downstream `create-<brand>` packages — see the README.

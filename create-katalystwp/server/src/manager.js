@@ -86,7 +86,7 @@ export class Manager {
   // admin account). Kept out of the operator's real ~/.config.
   async _writeScaffolderConfig() {
     const s = this.settings.get();
-    const dir = join(this.config.scaffolderConfigHome, 'create-wp-local-dev-agent-sandbox');
+    const dir = join(this.config.scaffolderConfigHome, 'create-katalystwp');
     await mkdir(dir, { recursive: true });
     await writeFile(
       join(dir, 'config.json'),

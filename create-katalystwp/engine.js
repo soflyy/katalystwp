@@ -1,5 +1,5 @@
 /**
- * create-wp-local-dev-agent-sandbox — scaffolding engine.
+ * create-katalystwp — scaffolding engine.
  *
  * `create()` is the reusable entry point. The bundled CLI (index.js) calls it
  * with no preset; downstream `create-<brand>` packages depend on this package
@@ -146,23 +146,34 @@ Options:
 }
 
 // User-level config — defaults applied to EVERY scaffold (set once, like
-// ~/.claude). Location: $XDG_CONFIG_HOME/create-wp-local-dev-agent-sandbox/
+// ~/.claude). Location: $XDG_CONFIG_HOME/create-katalystwp/
 // config.json (default ~/.config/…). Keys: wpAdminUser, wpAdminPassword,
 // wpAdminEmail. Missing/invalid file → {} (falls back to admin / password).
 // The devbox server runs as root, so root's config seeds all its envs too.
 export const USER_CONFIG_PATH = join(
+  process.env.XDG_CONFIG_HOME || join(homedir(), '.config'),
+  'create-katalystwp',
+  'config.json',
+);
+
+// Pre-rename location (the package was create-wp-local-dev-agent-sandbox) —
+// still read so existing users' defaults keep applying.
+const LEGACY_USER_CONFIG_PATH = join(
   process.env.XDG_CONFIG_HOME || join(homedir(), '.config'),
   'create-wp-local-dev-agent-sandbox',
   'config.json',
 );
 
 async function loadUserConfig() {
-  try {
-    const c = JSON.parse(await readFile(USER_CONFIG_PATH, 'utf8'));
-    return c && typeof c === 'object' ? c : {};
-  } catch {
-    return {};
+  for (const path of [USER_CONFIG_PATH, LEGACY_USER_CONFIG_PATH]) {
+    try {
+      const c = JSON.parse(await readFile(path, 'utf8'));
+      if (c && typeof c === 'object') return c;
+    } catch {
+      // try the next location
+    }
   }
+  return {};
 }
 
 async function copyTemplates(srcDir, destDir, vars) {
@@ -244,7 +255,7 @@ async function readDefinesFile(path) {
  */
 export async function create({ preset = {}, argv = process.argv.slice(2) } = {}) {
   // What to call this command in help/error text — wrappers pass preset.name.
-  const slug = preset.name ?? 'wp-local-dev-agent-sandbox';
+  const slug = preset.name ?? 'katalystwp';
   const pkg = `create-${slug}`;
 
   const args = parseArgs(argv);

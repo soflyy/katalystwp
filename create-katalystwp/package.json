@@ -1,10 +1,10 @@
 {
-  "name": "create-wp-local-dev-agent-sandbox",
+  "name": "create-katalystwp",
   "version": "0.6.1",
   "description": "Scaffold a local WordPress + AI-agent dev environment (Docker Compose) with WP-CLI, Claude Code, and the Cursor CLI in an isolated workspace container.",
   "type": "module",
   "bin": {
-    "create-wp-local-dev-agent-sandbox": "index.js"
+    "create-katalystwp": "index.js"
   },
   "exports": {
     ".": "./engine.js"
@@ -32,7 +32,8 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/soflyy/create-wp-local-dev-agent-sandbox.git"
+    "url": "git+https://github.com/soflyy/katalystwp.git",
+    "directory": "create-katalystwp"
   },
   "author": "Soflyy",
   "license": "GPL-2.0-or-later"

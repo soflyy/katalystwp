@@ -18,7 +18,7 @@ them from the repo root, or copy them next to your own project and adapt.
 ## Run it
 
 ```bash
-npm create wp-local-dev-agent-sandbox@latest my-breakdance -- \
+npm create katalystwp@latest my-breakdance -- \
   --port=8090 \
   --setup-script=./examples/breakdance-setup.sh \
   --dev-script=./examples/breakdance-dev.sh \

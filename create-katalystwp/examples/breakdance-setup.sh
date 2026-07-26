@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Sample --setup-script for create-wp-local-dev-agent-sandbox.
+# Sample --setup-script for create-katalystwp.
 #
 # It runs INSIDE the workspace container as the `node` user (the same place
 # `npm run bash` drops you), with the working directory at /home/node and
@@ -8,7 +8,7 @@
 # runs Breakdance's own installer against that WordPress.
 #
 # Try it:
-#   npm create wp-local-dev-agent-sandbox@latest my-breakdance -- \
+#   npm create katalystwp@latest my-breakdance -- \
 #     --port=8090 \
 #     --setup-script=./examples/breakdance-setup.sh \
 #     --defines=./examples/breakdance-defines.json \
