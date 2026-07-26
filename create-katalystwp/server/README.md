@@ -1,6 +1,6 @@
 # devbox-server
 
-A small HTTP control server (with a web UI) that manages many WordPress devbox environments — each a full [`create-wp-local-dev-agent-sandbox`](../README.md) stack — on a single Docker host, and **drives Claude Code headlessly inside each one** with live streaming to the browser.
+A small HTTP control server (with a web UI) that manages many WordPress devbox environments — each a full [`create-katalystwp`](../README.md) stack — on a single Docker host, and **drives Claude Code headlessly inside each one** with live streaming to the browser.
 
 It is dependency-free on the server side (bare Node `http`) because it controls Docker and launches agents — keep its supply-chain surface at zero. The UI is buildless (Preact + htm via CDN). It is **not** published to npm (the root package's `files` allowlist excludes `server/`).
 

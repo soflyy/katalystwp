@@ -3,6 +3,10 @@
 Notes for working on the scaffolder itself. (End-user usage lives in the
 [README](README.md).)
 
+This package lives in the `create-katalystwp/` directory of the
+[soflyy/katalystwp](https://github.com/soflyy/katalystwp) monorepo — all
+commands below run from that directory unless noted.
+
 ## Developing this scaffolder
 
 The two things you edit:
@@ -15,7 +19,7 @@ By default the scaffolder also runs `npm run setup` in the generated project (do
 ### Test a change end to end
 
 ```bash
-cd <this-repo>
+cd <this-repo>/create-katalystwp
 
 # 1. Scaffold into a throwaway dir (use a port that won't clash with other instances)
 #    Drop --scaffold-only to also build + boot + install in one go (Docker must be running).
@@ -60,8 +64,8 @@ To exercise the real `bin` entry (not just the file), use `npm link`:
 
 ```bash
 npm link
-create-wp-local-dev-agent-sandbox /tmp/try-it
-npm unlink -g create-wp-local-dev-agent-sandbox   # when done
+create-katalystwp /tmp/try-it
+npm unlink -g create-katalystwp   # when done
 ```
 
 ## Releasing a new version
@@ -71,9 +75,12 @@ Release is published — see [`.github/workflows/publish.yml`](.github/workflows
 Auth is npm [Trusted Publishing](https://docs.npmjs.com/trusted-publishers) (OIDC),
 so there are no tokens in the repo and the package ships with build provenance.
 
-**Do not run `npm publish` locally.** To cut a release, from a clean `master`:
+**Do not run `npm publish` locally.** To cut a release, from a clean `master`,
+in `create-katalystwp/` (`npm version` works from the subdirectory — the commit
+and tag land on the repo as usual):
 
 ```bash
+cd create-katalystwp
 npm version patch          # or `minor` / `major` — bumps package.json, commits, and tags vX.Y.Z
 git push --follow-tags     # push the commit and the new tag
 gh release create "v$(node -p "require('./package.json').version")" --generate-notes
@@ -82,6 +89,8 @@ gh release create "v$(node -p "require('./package.json').version")" --generate-n
 Publishing the GitHub Release triggers the workflow, which publishes the version
 currently in `package.json` to npm. Watch it with `gh run watch`.
 
-> One-time account setup (already configured): the package's **Trusted Publisher**
-> on npmjs.com must point at this repo and `.github/workflows/publish.yml`.
-> The very first `0.1.0` publish was done manually to create the package.
+> One-time account setup: the package's **Trusted Publisher** on npmjs.com must
+> point at this repo (`soflyy/katalystwp`) and `.github/workflows/publish.yml`.
+> The very first publish of a new package name must be done manually
+> (`npm publish` from `create-katalystwp/`) to create it — after that, Trusted
+> Publishing takes over.

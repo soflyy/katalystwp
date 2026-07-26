@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "HTTP control server that manages many WordPress + Cursor worker environments (create-wp-local-dev-agent-sandbox) on one Docker host.",
+  "description": "HTTP control server that manages many WordPress + Cursor worker environments (create-katalystwp) on one Docker host.",
   "bin": {
     "devbox-server": "src/index.js"
   },

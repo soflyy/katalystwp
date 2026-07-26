@@ -17,6 +17,10 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        # The published package lives in the monorepo's create-katalystwp/ dir.
+        working-directory: create-katalystwp
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6

@@ -48,7 +48,7 @@ export function loadConfig(env = process.env) {
     settingsPath: join(dataDir, 'settings.json'),
     // Server-scoped XDG_CONFIG_HOME handed to the scaffolder so the WP-admin
     // defaults from Settings seed new sites WITHOUT touching the operator's real
-    // ~/.config/create-wp-local-dev-agent-sandbox/config.json.
+    // ~/.config/create-katalystwp/config.json.
     scaffolderConfigHome: join(dataDir, 'xdg'),
     // Scratch space where the server materializes a create's setup-script /
     // defines files to hand the scaffolder as --setup-script / --defines paths.
