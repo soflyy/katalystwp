@@ -84,7 +84,7 @@ it would at a repo root — so commit and tag explicitly:)
 cd create-katalystwp
 npm version patch --no-git-tag-version   # or `minor` / `major` — bumps package.json only
 V=$(node -p "require('./package.json').version")
-git commit -am "Release v$V" && git tag "v$V"
+git commit -am "Release v$V" && git tag -a "v$V" -m "v$V"   # annotated — --follow-tags skips lightweight tags
 git push --follow-tags     # push the commit and the new tag
 gh release create "v$V" --generate-notes
 ```
