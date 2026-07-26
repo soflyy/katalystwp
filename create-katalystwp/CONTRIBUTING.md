@@ -75,15 +75,18 @@ Release is published — see [`.github/workflows/publish.yml`](.github/workflows
 Auth is npm [Trusted Publishing](https://docs.npmjs.com/trusted-publishers) (OIDC),
 so there are no tokens in the repo and the package ships with build provenance.
 
-**Do not run `npm publish` locally.** To cut a release, from a clean `master`,
-in `create-katalystwp/` (`npm version` works from the subdirectory — the commit
-and tag land on the repo as usual):
+**Do not run `npm publish` locally.** To cut a release, from a clean `master`.
+(Note: because `package.json` lives in the `create-katalystwp/` subdirectory,
+`npm version` only bumps the file — it does **not** create the git commit/tag
+it would at a repo root — so commit and tag explicitly:)
 
 ```bash
 cd create-katalystwp
-npm version patch          # or `minor` / `major` — bumps package.json, commits, and tags vX.Y.Z
+npm version patch --no-git-tag-version   # or `minor` / `major` — bumps package.json only
+V=$(node -p "require('./package.json').version")
+git commit -am "Release v$V" && git tag "v$V"
 git push --follow-tags     # push the commit and the new tag
-gh release create "v$(node -p "require('./package.json').version")" --generate-notes
+gh release create "v$V" --generate-notes
 ```
 
 Publishing the GitHub Release triggers the workflow, which publishes the version
