@@ -5,6 +5,7 @@
   "description": "Local WordPress + AI-agent dev sandbox (Docker).",
   "scripts": {
     "setup": "bash scripts/initial-setup.sh",
+    "katalyst": "npx -y create-katalystwp@latest menu",
     "start": "docker compose up -d --build",
     "stop": "docker compose stop",
     "down": "docker compose down",
