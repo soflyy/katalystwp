@@ -168,10 +168,12 @@ async function listEnvironments() {
 }
 
 // Run `npm run setup` in the project, capturing EVERYTHING to a log file under
-// ~/.katalystwp/logs/ and showing only the setup scripts' own step lines
-// (→ / ✓ / ✖ / ⚠ and their indented detail) — not the Docker build firehose.
-// --verbose streams the raw output as before. Resolves true on success.
-function runSetup(cwd, logPath, verbose) {
+// ~/.katalystwp/logs/. The Docker build firehose never reaches the console:
+// the setup scripts' own step lines (→ / ✓ / …) are passed to `onStep` — in a
+// terminal that feeds a single in-place spinner line, elsewhere they print as
+// a plain progress list. --verbose streams the raw output instead. Resolves
+// true on success.
+function runSetup(cwd, logPath, { verbose, onStep }) {
   return new Promise((res) => {
     const log = createWriteStream(logPath);
     const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
@@ -185,7 +187,7 @@ function runSetup(cwd, logPath, verbose) {
       while ((i = buf.indexOf('\n')) >= 0) {
         const line = buf.slice(0, i);
         buf = buf.slice(i + 1);
-        if (/^(→|✓|✖|⚠|Success:)/.test(line) || /^ {4}\S/.test(line)) console.log(line);
+        if (/^(→|✓)/.test(line)) onStep(line);
       }
     };
     child.stdout.on('data', onChunk);
@@ -600,7 +602,8 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
 
   const undecided = args.dir == null || agents == null || extraPlugins == null || !args.portExplicit;
   const canPrompt = !args.yes && process.stdin.isTTY && process.stdout.isTTY;
-  if (undecided && canPrompt) {
+  const promptRan = undecided && canPrompt;
+  if (promptRan) {
     ({ dir: args.dir, port, agents, plugins: extraPlugins } = await promptForChoices({
       pkg, dir: args.dir, defaultDir: 'my-site', port, askPort: !args.portExplicit, claimed, agents, plugins: extraPlugins, defaultAgents,
     }));
@@ -612,9 +615,13 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
   const targetDir = resolve(args.dir ?? '.');
   const projectName = basename(targetDir);
 
-  console.log(`\n→ Config: directory ${projectName} · port ${port} · agents: ${agents.length ? agents.map((k) => AGENTS[k].label).join(', ') : 'none'} · extra plugins: ${extraPlugins.length ? extraPlugins.join(', ') : 'none'}`);
-  if (undecided && !canPrompt) {
-    console.log('  (defaults — run in an interactive terminal to be asked, or set the dir argument / --port= --agents= --plugins=)');
+  // Interactive users just answered these — only recap when running on
+  // defaults/flags, so scripts and CI logs still show what was decided.
+  if (!promptRan) {
+    console.log(`\n→ Config: directory ${projectName} · port ${port} · agents: ${agents.length ? agents.map((k) => AGENTS[k].label).join(', ') : 'none'} · extra plugins: ${extraPlugins.length ? extraPlugins.join(', ') : 'none'}`);
+    if (undecided) {
+      console.log('  (defaults — run in an interactive terminal to be asked, or set the dir argument / --port= --agents= --plugins=)');
+    }
   }
 
   await mkdir(targetDir, { recursive: true });
@@ -720,28 +727,47 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
   });
 
   const cd = args.dir ? args.dir : '.';
-  // One aligned "npm run <agent>  # launch <label> in the workspace" line per
-  // selected agent, reused in both the scaffold-only and post-setup messages.
-  const agentRunLines = agents.map((k) => `${`  npm run ${k}`.padEnd(23)}# launch ${AGENTS[k].label} in the workspace`);
+  // "command  # what it does" rows, aligned per block.
+  const agentCmds = agents.map((k) => [`npm run ${k}`, `launch ${AGENTS[k].label} in the workspace`]);
+  const printCmds = (rows) => {
+    const w = Math.max(...rows.map(([c]) => c.length)) + 3;
+    for (const [c, d] of rows) console.log(`  ${c.padEnd(w)}${d ? `# ${d}` : ''}`);
+  };
   console.log(`\n✔ Scaffolded WordPress + agent sandbox in ${targetDir}\n`);
 
   if (!args.setup) {
     console.log('Next steps:');
     console.log(`  cd ${cd}`);
-    console.log('  npm run setup        # build, start & install WordPress + plugins (Docker must be running)');
-    console.log('  npm run start        # subsequent runs: just bring the containers up');
-    for (const l of agentRunLines) console.log(l);
+    printCmds([
+      ['npm run setup', 'build, start & install WordPress + plugins (Docker must be running)'],
+      ['npm run start', 'subsequent runs: just bring the containers up'],
+      ...agentCmds,
+    ]);
     console.log('');
     console.log(`Once setup finishes, your site is at ${termLink(`http://${args.publicHost}:${args.port}`)} — log in at /wp-admin with admin / password (default; set WP_ADMIN_USER / WP_ADMIN_PASSWORD in .env to change).`);
     return;
   }
 
-  console.log('→ Running initial setup (Docker must be running)…');
-  if (!args.verbose) {
-    console.log(`  The first build takes a few minutes. Full log: ${setupLog} (--verbose streams it)\n`);
-  }
+  // In a terminal, setup progress is ONE spinner line updating in place with
+  // the current step; elsewhere (CI, logs) the steps print as a plain list.
   await mkdir(join(STATE_DIR, 'logs'), { recursive: true }).catch(() => {});
-  const ok = await runSetup(targetDir, setupLog, args.verbose);
+  let spin = null;
+  if (!args.verbose && process.stdout.isTTY) {
+    try { spin = (await import('@clack/prompts')).spinner(); } catch { /* plain list below */ }
+  }
+  if (spin) {
+    spin.start('Setting up — the first build takes a few minutes');
+  } else {
+    console.log(`→ Running initial setup (Docker must be running)… Full log: ${setupLog}\n`);
+  }
+  const ok = await runSetup(targetDir, setupLog, {
+    verbose: args.verbose,
+    onStep: (line) => {
+      if (spin) spin.message(line.replace(/^[→✓]\s*/, '').replace(/…$/, ''));
+      else if (!args.verbose) console.log(line);
+    },
+  });
+  if (spin) spin.stop(ok ? 'Setup complete' : 'Setup failed', ok ? 0 : 2);
   if (!ok) {
     console.error('\n✖ Initial setup did not finish (is Docker running?). Last lines of the log:\n');
     const logTail = await readFile(setupLog, 'utf8').then((s) => s.trimEnd().split('\n').slice(-15)).catch(() => []);
@@ -752,24 +778,22 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
     process.exit(1);
   }
 
-  console.log('\nEveryday commands:');
-  console.log(`  cd ${cd}`);
-  console.log('  npm run start        # bring the stack up next time (it stays up otherwise)');
-  for (const l of agentRunLines) console.log(l);
-  console.log('  npm run bash         # shell into the workspace container');
-  if (devScriptRel) {
-    console.log('  npm run dev:logs     # follow the dev script running in the dev container');
+  // Compact summary: what you need to use the site, then the two or three
+  // commands you'll actually run next. Everything else is in the project README.
+  console.log('');
+  console.log(`  WordPress  ${termLink(`http://${args.publicHost}:${args.port}`)}`);
+  console.log(`  Admin      ${termLink(`http://${args.publicHost}:${args.port}/wp-admin`)}`);
+  console.log(`  Login      ${userConfig.wpAdminUser || 'admin'} / ${userConfig.wpAdminPassword || 'password'}`);
+  for (const p of appPorts) {
+    console.log(`  App        ${termLink(`http://${args.publicHost}:${p.host}`)} → workspace:${p.container}`);
   }
   console.log('');
-  console.log('───────────────────────────────────────────────');
-  console.log('  Your WordPress site is ready:');
-  console.log(`    Site:     ${termLink(`http://${args.publicHost}:${args.port}`)}`);
-  console.log(`    Admin:    ${termLink(`http://${args.publicHost}:${args.port}/wp-admin`)}`);
-  console.log('    Username: admin');
-  console.log('    Password: password');
-  for (const p of appPorts) {
-    console.log(`    App:      ${termLink(`http://${args.publicHost}:${p.host}`)} → workspace:${p.container}`);
-  }
-  console.log('───────────────────────────────────────────────');
+  console.log(`  cd ${cd}`);
+  printCmds([
+    ...agentCmds,
+    ['npm run bash', 'shell · stop|start the stack: npm run stop|start'],
+    ...(devScriptRel ? [['npm run dev:logs', 'follow the dev script']] : []),
+    [`npx ${pkg} list`, 'all your environments'],
+  ]);
   console.log('');
 }
