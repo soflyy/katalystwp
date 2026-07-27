@@ -1,6 +1,6 @@
 {
   "name": "create-katalystwp",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "description": "Scaffold a local WordPress + AI-agent dev environment (Docker Compose) with WP-CLI, Claude Code, and the Cursor CLI in an isolated workspace container.",
   "type": "module",
   "bin": {
