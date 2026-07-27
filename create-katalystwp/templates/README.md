@@ -28,8 +28,8 @@ npm run setup     # build, start, and install WordPress
 
 Then open **http://localhost:__WP_PORT__**. WordPress is already installed — log in at **/wp-admin** with the admin account from `.env`:
 
-- **Username:** `admin` (`WP_ADMIN_USER`)
-- **Password:** `password` (`WP_ADMIN_PASSWORD`)
+- **Username:** `WP_ADMIN_USER` in `.env` (default `admin`)
+- **Password:** `WP_ADMIN_PASSWORD` in `.env` (generated per site at scaffold time)
 
 Change `WP_ADMIN_USER` / `WP_ADMIN_PASSWORD` in `.env` before `npm run setup` to use your own.
 
@@ -41,7 +41,7 @@ npm run start     # build + start containers
 
 | Script | What it does |
 | --- | --- |
-| `npm run setup` | First-run: start the stack, install WordPress (admin account from `.env`, default `admin` / `password`), install plugins |
+| `npm run setup` | First-run: start the stack, install WordPress (admin account from `.env`, user `admin` with a generated password, both in `.env`), install plugins |
 | `npm run start` | `docker compose up -d --build` |
 | `npm run stop` | Stop containers (keep data) |
 | `npm run down` | Stop + remove containers (data preserved in `db/`, `workspace/`) |

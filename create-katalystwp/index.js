@@ -19,7 +19,13 @@
 
 import { create } from './engine.js';
 
-create().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// Explicit exit: the interactive prompts (@clack/core) and the press-Enter
+// finish step touch process.stdin, which can otherwise keep the event loop
+// alive after all work is done.
+create().then(
+  () => process.exit(0),
+  (err) => {
+    console.error(err);
+    process.exit(1);
+  },
+);

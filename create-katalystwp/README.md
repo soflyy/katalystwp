@@ -69,7 +69,7 @@ Environments (~/.katalystwp/environments.json):
 
 The registry is also what lets a new scaffold auto-pick a port that a *stopped* environment owns without conflict. Entries whose directory has been deleted are pruned automatically; setup logs live next to it in `~/.katalystwp/logs/`.
 
-Docker must be running. When it finishes you have a live site at **http://localhost:8080** — log in at `/wp-admin` with `admin` / `password` (the default; configurable in `.env` via `WP_ADMIN_USER` / `WP_ADMIN_PASSWORD`). Then:
+Docker must be running. When it finishes you have a live site at **http://localhost:8080** — log in at `/wp-admin` with the credentials shown at the end (username `admin`, a per-site generated password — both saved in `.env` as `WP_ADMIN_USER` / `WP_ADMIN_PASSWORD`). At the end, press Enter to open wp-admin already logged in (a one-time login link minted through the pre-installed Agent Connector). Then:
 
 ```bash
 cd my-site
@@ -207,7 +207,7 @@ Set defaults once and they apply to every project you scaffold (and every enviro
 }
 ```
 
-At scaffold time these seed the new project's `.env` (`WP_ADMIN_USER` / `WP_ADMIN_PASSWORD` / `WP_ADMIN_EMAIL`); with no config file they fall back to `admin` / `password`. To override for a single project, edit that project's `.env` and `npm run reset`. (Keep the password free of shell metacharacters, or quote it in `.env` — the setup scripts source `.env`.)
+At scaffold time these seed the new project's `.env` (`WP_ADMIN_USER` / `WP_ADMIN_PASSWORD` / `WP_ADMIN_EMAIL`); with no config file the user falls back to `admin` and the password is generated per site. To override for a single project, edit that project's `.env` and `npm run reset`. (Keep the password free of shell metacharacters, or quote it in `.env` — the setup scripts source `.env`.)
 
 ## Build your own `npm create` command
 
