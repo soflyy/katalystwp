@@ -12,6 +12,7 @@ import { dirname, join, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { createServer, connect } from 'node:net';
 import { stat } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
@@ -51,10 +52,20 @@ export const AGENTS = {
 };
 const DEFAULT_AGENTS = ['claude'];
 
-// OSC 8 terminal hyperlink — clickable in iTerm2, Windows Terminal, VS Code,
+// ---- terminal styling ------------------------------------------------------
+// KatalystWP brand pink (#ff2d78): truecolor where advertised, a close 256-
+// color elsewhere. All styling is disabled when piped or NO_COLOR is set.
+const COLOR_ON = process.stdout.isTTY && !process.env.NO_COLOR;
+const PINK_ON = (process.env.COLORTERM || '').includes('truecolor')
+  ? '[38;2;255;45;120m'
+  : '[38;5;198m';
+export const pink = (s) => (COLOR_ON ? `${PINK_ON}${s}[39m` : s);
+export const dim = (s) => (COLOR_ON ? `[2m${s}[22m` : s);
+
+// OSC 8 terminal hyperlink (clickable in iTerm2, Windows Terminal, VS Code,
 // and most modern emulators; unsupported terminals just show the plain URL,
-// and piped output gets the URL untouched.
-const termLink = (url) => (process.stdout.isTTY ? `\u001b]8;;${url}\u0007${url}\u001b]8;;\u0007` : url);
+// and piped output gets the URL untouched). Brand-pink when colors are on.
+const termLink = (url) => (process.stdout.isTTY ? pink(`]8;;${url}${url}]8;;`) : url);
 
 // Parse an agents list ("claude,cursor", "all", "none"). Used by --agents and
 // by preset.agents. Throws on unknown names so typos fail loudly.
@@ -165,6 +176,47 @@ async function listEnvironments() {
     console.log(`  ${r.name.padEnd(widths.name)}  ${r.port.padEnd(widths.port)}  ${r.status.padEnd(widths.status)}  ${r.agents.padEnd(widths.agents)}  ${r.dir}`);
   }
   console.log('\n  Start/stop one: cd <dir> && npm run start | npm run stop\n');
+}
+
+// Local-dev admin password: real enough to not be embarrassing, safe for the
+// .env file the setup scripts `source` (lowercase alphanumeric + dashes only).
+function generatePassword() {
+  const chunk = () => randomBytes(4).toString('base64url').replace(/[^a-z0-9]/gi, '').toLowerCase().padEnd(4, '0').slice(0, 4);
+  return `k4t-${chunk()}-${chunk()}`;
+}
+
+// Mint a one-time passwordless wp-admin login URL through the Agent Connector
+// ability installed in every sandbox — the same mechanism the devbox server's
+// /admin-login endpoint uses. Returns the URL, or null if unavailable.
+const ADMIN_LOGIN_PHP = `
+$admins = get_users(array('role' => 'administrator', 'number' => 1, 'orderby' => 'ID'));
+$u = $admins ? $admins[0] : null;
+if (!$u) { fwrite(STDERR, 'no administrator user'); exit(1); }
+$cls = 'AgentConnectorForWp\\\\DefaultAbilities\\\\Services\\\\AdminLoginLink';
+if (!class_exists($cls)) { fwrite(STDERR, 'abilities plugin (admin login) not active'); exit(1); }
+$r = $cls::create($u->ID, 'index.php', 300);
+if (is_wp_error($r)) { fwrite(STDERR, $r->get_error_message()); exit(1); }
+echo $r['login_url'];
+`;
+
+function mintAdminLoginUrl(cwd) {
+  return new Promise((res) => {
+    const child = spawn('docker', ['compose', 'exec', '-T', 'workspace', 'wp', 'eval', ADMIN_LOGIN_PHP], { cwd });
+    let out = '';
+    child.stdout.on('data', (d) => { out += d; });
+    child.on('close', (code) => res(code === 0 && /acfw_login=/.test(out.trim()) ? out.trim() : null));
+    child.on('error', () => res(null));
+  });
+}
+
+// Open a URL in the default browser, cross-platform. Fire-and-forget.
+function openBrowser(url) {
+  const [cmd, cmdArgs] = process.platform === 'darwin' ? ['open', [url]]
+    : process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]]
+    : ['xdg-open', [url]];
+  try {
+    spawn(cmd, cmdArgs, { detached: true, stdio: 'ignore' }).unref();
+  } catch { /* best-effort */ }
 }
 
 // Run `npm run setup` in the project, capturing EVERYTHING to a log file under
@@ -345,7 +397,8 @@ Options:
 // User-level config — defaults applied to EVERY scaffold (set once, like
 // ~/.claude). Location: $XDG_CONFIG_HOME/create-katalystwp/
 // config.json (default ~/.config/…). Keys: wpAdminUser, wpAdminPassword,
-// wpAdminEmail. Missing/invalid file → {} (falls back to admin / password).
+// wpAdminEmail. Missing/invalid file → {} (falls back to user "admin" with a
+// per-site generated password).
 // The devbox server runs as root, so root's config seeds all its envs too.
 export const USER_CONFIG_PATH = join(
   process.env.XDG_CONFIG_HOME || join(homedir(), '.config'),
@@ -378,10 +431,10 @@ async function loadUserConfig() {
 // toggles a selection; Enter accepts). Loaded dynamically so non-interactive
 // callers (CI, the devbox server driving index.js from a bare checkout) never
 // need the dependency at all — if it's missing we warn and use the defaults.
-async function promptForChoices({ pkg, dir, defaultDir, port, askPort, claimed, agents, plugins, defaultAgents }) {
-  let p;
+async function promptForChoices({ dir, defaultDir, port, askPort, claimed, agents, plugins, defaultAgents }) {
+  let ui;
   try {
-    p = await import('@clack/prompts');
+    ui = await import('./ui.js');
   } catch {
     console.error('⚠ Interactive prompts need this package\'s dependencies (npm install) — using defaults instead.');
     return { dir: dir ?? defaultDir, port, agents: agents ?? [...defaultAgents], plugins: plugins ?? [] };
@@ -389,41 +442,35 @@ async function promptForChoices({ pkg, dir, defaultDir, port, askPort, claimed, 
   // Ctrl+C (or closing stdin) on any question aborts cleanly before anything
   // is written to disk.
   const answer = (v) => {
-    if (p.isCancel(v)) {
-      p.cancel('Cancelled — nothing was created.');
+    if (ui.isCancel(v)) {
+      console.log(`\n${dim('Cancelled — nothing was created.')}\n`);
       process.exit(1);
     }
-    return typeof v === 'string' ? v.trim() : v;
+    return v;
   };
 
-  p.intro(pkg);
   if (dir == null) {
     // Re-ask on a non-empty directory so the user doesn't answer everything
     // else first and only then hit the "not empty" error.
     for (;;) {
-      const a = answer(await p.text({
-        message: 'Project directory',
-        placeholder: defaultDir,
-        defaultValue: defaultDir,
-      })) || defaultDir;
+      const a = answer(await ui.question('Project directory', { placeholder: defaultDir, defaultValue: defaultDir })) || defaultDir;
       const existing = await readdir(resolve(a)).catch(() => []);
       const blocking = existing.filter((f) => !ALLOWED_EXISTING.has(f));
       if (!blocking.length) { dir = a; break; }
-      p.log.error(`${resolve(a)} is not empty — pick a new or empty directory.`);
+      console.log(`  ${pink('✖')} ${resolve(a)} is not empty — pick a new or empty directory.`);
     }
   }
   if (askPort) {
     for (;;) {
-      const a = answer(await p.text({
-        message: 'Host port for the WordPress site',
+      const a = answer(await ui.question('Host port for the WordPress site', {
         placeholder: String(port),
         defaultValue: String(port),
         validate: (v) => (v && v.trim() && !/^\d{1,5}$/.test(v.trim()) ? 'Enter a port number (1-65535).' : undefined),
       })) || String(port);
       const n = parseInt(a, 10);
-      if (!(n >= 1 && n <= 65535)) { p.log.error('Enter a port number (1-65535).'); continue; }
+      if (!(n >= 1 && n <= 65535)) { console.log(`  ${pink('✖')} Enter a port number (1-65535).`); continue; }
       if (claimed.has(n) || !(await portFree(n))) {
-        p.log.error(`Port ${n} is busy (another environment or process) — pick a different one.`);
+        console.log(`  ${pink('✖')} Port ${n} is busy (another environment or process) — pick a different one.`);
         continue;
       }
       port = String(n);
@@ -431,26 +478,16 @@ async function promptForChoices({ pkg, dir, defaultDir, port, askPort, claimed, 
     }
   }
   if (agents == null) {
-    agents = answer(await p.multiselect({
-      message: 'AI coding agents to install in the workspace (space toggles, none is fine)',
-      options: Object.entries(AGENTS).map(([value, a]) => ({
-        value,
-        label: a.label,
-        hint: defaultAgents.includes(value) ? 'default' : undefined,
-      })),
-      initialValues: [...defaultAgents],
-      required: false,
-    }));
+    agents = answer(await ui.pick(
+      'Which AI agents should I install?',
+      Object.entries(AGENTS).map(([value, a]) => ({ value, label: a.label })),
+      { initialValues: [...defaultAgents] },
+    ));
   }
   if (plugins == null) {
-    const a = answer(await p.text({
-      message: 'WordPress plugins to pre-install (wordpress.org slugs or .zip URLs, comma-separated)',
-      placeholder: 'none',
-      defaultValue: '',
-    }));
+    const a = answer(await ui.question('WordPress plugins to pre-install (slugs or .zip URLs, comma-separated)', { placeholder: 'none' }));
     plugins = a ? a.split(',').map((s) => s.trim()).filter(Boolean) : [];
   }
-  p.outro('Scaffolding…');
   return { dir, port, agents, plugins };
 }
 
@@ -605,7 +642,7 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
   const promptRan = undecided && canPrompt;
   if (promptRan) {
     ({ dir: args.dir, port, agents, plugins: extraPlugins } = await promptForChoices({
-      pkg, dir: args.dir, defaultDir: 'my-site', port, askPort: !args.portExplicit, claimed, agents, plugins: extraPlugins, defaultAgents,
+      dir: args.dir, defaultDir: 'my-site', port, askPort: !args.portExplicit, claimed, agents, plugins: extraPlugins, defaultAgents,
     }));
   }
   agents ??= defaultAgents;
@@ -636,8 +673,12 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
     process.exit(1);
   }
 
-  // User-level defaults (set once in ~/.config/...); fall back to admin/password.
+  // Admin account: user-level config wins (set once in ~/.config/...);
+  // otherwise the username defaults to admin and the password is GENERATED per
+  // site (persisted in the project's .env) — never a guessable default.
   const userConfig = await loadUserConfig();
+  const adminUser = userConfig.wpAdminUser || 'admin';
+  const adminPass = userConfig.wpAdminPassword || generatePassword();
   await copyTemplates(TEMPLATES, targetDir, {
     projectName,
     agents,
@@ -645,8 +686,8 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
     port: String(args.port),
     publicHost: args.publicHost,
     appPortsBlock: renderAppPortsBlock(appPorts),
-    wpAdminUser: userConfig.wpAdminUser || 'admin',
-    wpAdminPassword: userConfig.wpAdminPassword || 'password',
+    wpAdminUser: adminUser,
+    wpAdminPassword: adminPass,
     wpAdminEmail: userConfig.wpAdminEmail || 'admin@example.com',
   });
 
@@ -733,7 +774,9 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
     const w = Math.max(...rows.map(([c]) => c.length)) + 3;
     for (const [c, d] of rows) console.log(`  ${c.padEnd(w)}${d ? `# ${d}` : ''}`);
   };
-  console.log(`\n✔ Scaffolded WordPress + agent sandbox in ${targetDir}\n`);
+  // Interactive terminals go straight from the answers to the progress line
+  // (the summary card ends with the cd path); non-interactive logs keep this.
+  if (!promptRan) console.log(`\n✔ Scaffolded WordPress + agent sandbox in ${targetDir}\n`);
 
   if (!args.setup) {
     console.log('Next steps:');
@@ -744,30 +787,30 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
       ...agentCmds,
     ]);
     console.log('');
-    console.log(`Once setup finishes, your site is at ${termLink(`http://${args.publicHost}:${args.port}`)} — log in at /wp-admin with admin / password (default; set WP_ADMIN_USER / WP_ADMIN_PASSWORD in .env to change).`);
+    console.log(`Once setup finishes, your site is at ${termLink(`http://${args.publicHost}:${args.port}`)} — log in at /wp-admin with ${adminUser} / ${adminPass} (saved in .env as WP_ADMIN_USER / WP_ADMIN_PASSWORD).`);
     return;
   }
 
-  // In a terminal, setup progress is ONE spinner line updating in place with
-  // the current step; elsewhere (CI, logs) the steps print as a plain list.
+  // In a terminal, setup progress is ONE dim line updating in place with the
+  // current step; elsewhere (CI, logs) the steps print as a plain list.
   await mkdir(join(STATE_DIR, 'logs'), { recursive: true }).catch(() => {});
-  let spin = null;
+  let progress = null;
   if (!args.verbose && process.stdout.isTTY) {
-    try { spin = (await import('@clack/prompts')).spinner(); } catch { /* plain list below */ }
+    try { progress = (await import('./ui.js')).progressLine(); } catch { /* plain list below */ }
   }
-  if (spin) {
-    spin.start('Setting up — the first build takes a few minutes');
+  if (progress) {
+    progress.tick('starting containers (the first build takes a few minutes)');
   } else {
     console.log(`→ Running initial setup (Docker must be running)… Full log: ${setupLog}\n`);
   }
   const ok = await runSetup(targetDir, setupLog, {
     verbose: args.verbose,
     onStep: (line) => {
-      if (spin) spin.message(line.replace(/^[→✓]\s*/, '').replace(/…$/, ''));
+      if (progress) progress.tick(line.replace(/^[→✓]\s*/, '').replace(/…$/, ''));
       else if (!args.verbose) console.log(line);
     },
   });
-  if (spin) spin.stop(ok ? 'Setup complete' : 'Setup failed', ok ? 0 : 2);
+  if (progress) progress.done();
   if (!ok) {
     console.error('\n✖ Initial setup did not finish (is Docker running?). Last lines of the log:\n');
     const logTail = await readFile(setupLog, 'utf8').then((s) => s.trimEnd().split('\n').slice(-15)).catch(() => []);
@@ -780,12 +823,13 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
 
   // Compact summary: what you need to use the site, then the two or three
   // commands you'll actually run next. Everything else is in the project README.
-  console.log('');
-  console.log(`  WordPress  ${termLink(`http://${args.publicHost}:${args.port}`)}`);
-  console.log(`  Admin      ${termLink(`http://${args.publicHost}:${args.port}/wp-admin`)}`);
-  console.log(`  Login      ${userConfig.wpAdminUser || 'admin'} / ${userConfig.wpAdminPassword || 'password'}`);
+  console.log(`\n${dim('─'.repeat(48))}\n`);
+  console.log(`  ${dim('WordPress')}  ${termLink(`http://${args.publicHost}:${args.port}`)}`);
+  console.log(`  ${dim('Admin')}      ${termLink(`http://${args.publicHost}:${args.port}/wp-admin`)}`);
+  console.log(`  ${dim('Username')}   ${adminUser}`);
+  console.log(`  ${dim('Password')}   ${adminPass}`);
   for (const p of appPorts) {
-    console.log(`  App        ${termLink(`http://${args.publicHost}:${p.host}`)} → workspace:${p.container}`);
+    console.log(`  ${dim('App')}        ${termLink(`http://${args.publicHost}:${p.host}`)} → workspace:${p.container}`);
   }
   console.log('');
   console.log(`  cd ${cd}`);
@@ -796,4 +840,31 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
     [`npx ${pkg} list`, 'all your environments'],
   ]);
   console.log('');
+
+  // One keypress from a logged-in dashboard: mint a one-time passwordless
+  // login link (Agent Connector ability) and open it in the browser. TTY only.
+  // KATALYSTWP_NO_OPEN=1 prints the link instead of opening a browser (SSH
+  // sessions, tests).
+  if (process.stdin.isTTY && process.stdout.isTTY) {
+    process.stdout.write(`  Press ${pink('Enter')} to open wp-admin (one-click login), Ctrl+C to skip… `);
+    await new Promise((r) => { process.stdin.resume(); process.stdin.once('data', r); });
+    const minted = await mintAdminLoginUrl(targetDir);
+    let target = minted ?? `http://${args.publicHost}:${args.port}/wp-admin`;
+    if (minted) {
+      // Rebase onto the browser-facing host/port (redemption is host-agnostic).
+      try {
+        const u = new URL(minted);
+        u.hostname = args.publicHost;
+        u.port = String(args.port);
+        target = u.toString();
+      } catch { /* use as minted */ }
+    }
+    if (process.env.KATALYSTWP_NO_OPEN) {
+      console.log(`\n  ${dim('One-click login:')} ${target}\n`);
+    } else {
+      openBrowser(target);
+      console.log(`\n  ${dim(minted ? 'Opening wp-admin (logged in)…' : 'Opening wp-admin (log in with the credentials above)…')}\n`);
+    }
+    process.stdin.pause();
+  }
 }
