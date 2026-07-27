@@ -12,6 +12,7 @@ import { dirname, join, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline/promises';
 import { randomBytes } from 'node:crypto';
 import { createServer, connect } from 'node:net';
 import { stat } from 'node:fs/promises';
@@ -254,7 +255,7 @@ function openBrowser(url) {
 // sandbox.config.json contents (only scaffolderVersion is stamped),
 // scripts/user-setup.sh, scripts/dev.sh, and the db/ and workspace/ data.
 // npm scripts the user added to package.json are preserved.
-async function updateProject() {
+async function updateProject({ yes = false } = {}) {
   const targetDir = process.cwd();
   let envText;
   try {
@@ -275,7 +276,28 @@ async function updateProject() {
   // Projects from before agent selection (<= 0.7.x) had every agent installed.
   const agents = Array.isArray(cfg.agents) ? cfg.agents.filter((k) => AGENTS[k]) : Object.keys(AGENTS);
   const appPorts = parseAppPorts((cfg.appPorts ?? []).map((p) => `${p.host}:${p.container}`).join(','));
-  console.log(`→ Updating ${projectName}: ${cfg.scaffolderVersion ?? 'pre-0.8'} → ${ENGINE_VERSION}`);
+  console.log(`→ Updating ${projectName}: ${cfg.scaffolderVersion ?? 'pre-0.8'} → ${ENGINE_VERSION}\n`);
+  console.log('This refreshes Katalyst\'s own tooling files in this project:');
+  console.log('  scripts/ (except your user-setup.sh / dev.sh), bin/, skills/, the');
+  console.log('  Dockerfiles, docker-compose.yml, README.md, and the npm scripts in');
+  console.log('  package.json (scripts you added yourself are kept).');
+  console.log('It does NOT touch your WordPress site, database, wp-content, uploads,');
+  console.log('  .env, sandbox.config.json settings, or php/php.ini.');
+  console.log(`${pink('If you hand-edited any of the refreshed files, those edits will be')}`);
+  console.log(`${pink('overwritten.')} Take a backup first — a git commit, or a copy of the folder.\n`);
+  if (!yes) {
+    if (!process.stdin.isTTY) {
+      console.error('✖ Not updating: confirm with --yes when running non-interactively.');
+      process.exit(1);
+    }
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const a = (await rl.question('? I understand — update now [y/N]: ').catch(() => '')).trim().toLowerCase();
+    rl.close();
+    if (a !== 'y' && a !== 'yes') {
+      console.log('Aborted — nothing was changed.');
+      process.exit(0);
+    }
+  }
 
   await copyTemplates(TEMPLATES, targetDir, {
     projectName,
@@ -287,7 +309,7 @@ async function updateProject() {
     wpAdminUser: env.WP_ADMIN_USER || 'admin',
     wpAdminPassword: env.WP_ADMIN_PASSWORD || 'password',
     wpAdminEmail: env.WP_ADMIN_EMAIL || 'admin@example.com',
-  }, new Set(['env.example', 'sandbox.config.json', 'package.json']));
+  }, new Set(['env.example', 'sandbox.config.json', 'package.json', 'php']));
 
   // The dev-service override is emitted on demand — refresh it only where the
   // project actually uses a dev script.
@@ -457,8 +479,10 @@ Commands:
                         wp-admin, agents, sandbox shell) for the project in
                         the current directory — what \`npm run katalyst\` runs.
   update                Refresh the Katalyst-owned files of the project in the
-                        current directory to this package's versions. Never
-                        touches .env, your sandbox.config.json settings, your
+                        current directory to this package's versions. Warns,
+                        recommends a backup, and asks for confirmation first
+                        (--yes skips the question). Never touches .env, your
+                        sandbox.config.json settings, php/php.ini, your
                         setup/dev scripts, or site data; custom npm scripts
                         are preserved.
 
@@ -696,7 +720,7 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
     return;
   }
   if (args.dir === 'update') {
-    await updateProject();
+    await updateProject({ yes: args.yes });
     return;
   }
   if (args.dir === 'menu') {

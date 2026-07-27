@@ -12,21 +12,16 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "→ Building and starting containers…"
-# Refresh base images (wordpress:latest, node, …) at most once a week — a
-# stale local cache otherwise pins new sites to an old WordPress forever.
-# Between refreshes (and offline — every pull is fail-soft) setup uses the
-# local cache with no registry round-trips.
-STAMP="$HOME/.katalystwp/image-pull-stamp"
-if [ ! -f "$STAMP" ] || [ -n "$(find "$STAMP" -mtime +7 2>/dev/null)" ]; then
-  echo "→ Checking for newer base images…"
-  if docker compose build --pull; then
-    docker compose pull db playwright >/dev/null 2>&1 || true
-    mkdir -p "$HOME/.katalystwp" && touch "$STAMP"
-  else
-    docker compose build   # offline / registry hiccup — build from cache
-  fi
+# Always check for newer base images (wordpress:latest, node, …) — a couple of
+# seconds when everything is current; docker only downloads when the registry
+# digest actually changed. Offline / registry hiccup falls back to the local
+# cache so setup still works.
+if ! docker compose build --pull; then
+  echo "→ Registry unreachable — building from the local image cache."
+  docker compose build
 fi
-docker compose up -d --build
+docker compose pull db playwright >/dev/null 2>&1 || true
+docker compose up -d
 
 echo "→ Waiting for WordPress files and the database…"
 tries=0
