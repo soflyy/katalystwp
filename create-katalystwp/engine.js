@@ -19,6 +19,10 @@ import { createWriteStream } from 'node:fs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TEMPLATES = join(HERE, 'templates');
+// This package's version — recorded into scaffolds (sandbox.config.json and
+// the __KATALYST_VERSION__ placeholder in templates) so the shipped menu can
+// offer updates.
+const ENGINE_VERSION = JSON.parse(await readFile(join(HERE, 'package.json'), 'utf8')).version;
 
 // Template filename -> output filename (dotfiles can't ship as dotfiles in npm).
 const RENAME = {
@@ -244,6 +248,81 @@ function openBrowser(url) {
   } catch { /* best-effort */ }
 }
 
+// `npx create-<brand>@latest update` — refresh the Katalyst-owned files of the
+// project in the current directory to THIS package's versions (what the
+// menu's "Update Katalyst" item runs). NEVER touched: .env,
+// sandbox.config.json contents (only scaffolderVersion is stamped),
+// scripts/user-setup.sh, scripts/dev.sh, and the db/ and workspace/ data.
+// npm scripts the user added to package.json are preserved.
+async function updateProject() {
+  const targetDir = process.cwd();
+  let envText;
+  try {
+    envText = await readFile(join(targetDir, '.env'), 'utf8');
+  } catch {
+    console.error('✖ No .env here — run update from a Katalyst site directory.');
+    process.exit(1);
+  }
+  const env = {};
+  for (const line of envText.split('\n')) {
+    const m = line.match(/^([A-Z_]+)=(.*)$/);
+    if (m) env[m[1]] = m[2];
+  }
+  let cfg = {};
+  try { cfg = JSON.parse(await readFile(join(targetDir, 'sandbox.config.json'), 'utf8')); } catch { /* tolerated */ }
+
+  const projectName = basename(targetDir);
+  // Projects from before agent selection (<= 0.7.x) had every agent installed.
+  const agents = Array.isArray(cfg.agents) ? cfg.agents.filter((k) => AGENTS[k]) : Object.keys(AGENTS);
+  const appPorts = parseAppPorts((cfg.appPorts ?? []).map((p) => `${p.host}:${p.container}`).join(','));
+  console.log(`→ Updating ${projectName}: ${cfg.scaffolderVersion ?? 'pre-0.8'} → ${ENGINE_VERSION}`);
+
+  await copyTemplates(TEMPLATES, targetDir, {
+    projectName,
+    agents,
+    agentNpmPkgs: agents.map((k) => AGENTS[k].pkg).filter(Boolean).map((p) => p + ' ').join(''),
+    port: env.WP_PORT || '8080',
+    publicHost: env.PUBLIC_HOST || 'localhost',
+    appPortsBlock: renderAppPortsBlock(appPorts),
+    wpAdminUser: env.WP_ADMIN_USER || 'admin',
+    wpAdminPassword: env.WP_ADMIN_PASSWORD || 'password',
+    wpAdminEmail: env.WP_ADMIN_EMAIL || 'admin@example.com',
+  }, new Set(['env.example', 'sandbox.config.json', 'package.json']));
+
+  // The dev-service override is emitted on demand — refresh it only where the
+  // project actually uses a dev script.
+  if (cfg.devScript) {
+    await writeFile(join(targetDir, 'docker-compose.override.yml'), await readFile(join(TEMPLATES, 'docker-compose.override.yml'), 'utf8'));
+  }
+
+  // package.json: current template scripts (pruned to this project's agents),
+  // with any user-added scripts carried over.
+  const tplAll = JSON.parse((await readFile(join(TEMPLATES, 'package.json'), 'utf8')).replaceAll('__PROJECT_NAME__', projectName));
+  const rendered = { ...tplAll, scripts: { ...tplAll.scripts } };
+  for (const key of Object.keys(AGENTS)) if (!agents.includes(key)) delete rendered.scripts[key];
+  const existingPkg = await readFile(join(targetDir, 'package.json'), 'utf8').then(JSON.parse).catch(() => ({}));
+  const known = new Set(Object.keys(tplAll.scripts));
+  for (const [k, v] of Object.entries(existingPkg.scripts ?? {})) {
+    if (!known.has(k)) rendered.scripts[k] = v;
+  }
+  if (existingPkg.name) rendered.name = existingPkg.name;
+  await writeFile(join(targetDir, 'package.json'), JSON.stringify(rendered, null, 2) + '\n');
+
+  cfg.agents = agents;
+  cfg.scaffolderVersion = ENGINE_VERSION;
+  await writeFile(join(targetDir, 'sandbox.config.json'), JSON.stringify(cfg, null, 2) + '\n');
+  await recordEnvironment({
+    name: projectName,
+    dir: targetDir,
+    port: parseInt(env.WP_PORT || '8080', 10),
+    agents,
+    updatedAt: new Date().toISOString(),
+  });
+
+  console.log(`✓ Updated to ${ENGINE_VERSION}.`);
+  console.log('  Container-level changes (agents, base images) apply on the next: npm run setup  (safe to re-run)');
+}
+
 // Run `npm run setup` in the project, capturing EVERYTHING to a log file under
 // ~/.katalystwp/logs/. The Docker build firehose never reaches the console:
 // the setup scripts' own step lines (→ / ✓ / …) are passed to `onStep` — in a
@@ -377,6 +456,11 @@ Commands:
   menu                  Reopen the Katalyst menu (site links, one-click
                         wp-admin, agents, sandbox shell) for the project in
                         the current directory — what \`npm run katalyst\` runs.
+  update                Refresh the Katalyst-owned files of the project in the
+                        current directory to this package's versions. Never
+                        touches .env, your sandbox.config.json settings, your
+                        setup/dev scripts, or site data; custom npm scripts
+                        are preserved.
 
 Arguments:
   dir                   Target directory. Asked interactively when omitted
@@ -510,14 +594,14 @@ async function promptForChoices({ dir, defaultDir, agents, defaultAgents }) {
 }
 
 
-async function copyTemplates(srcDir, destDir, vars) {
+async function copyTemplates(srcDir, destDir, vars, skip = new Set()) {
   for (const entry of await readdir(srcDir, { withFileTypes: true })) {
-    if (SKIP_TEMPLATES.has(entry.name)) continue;
+    if (SKIP_TEMPLATES.has(entry.name) || skip.has(entry.name)) continue;
     const src = join(srcDir, entry.name);
     const dest = join(destDir, RENAME[entry.name] ?? entry.name);
     if (entry.isDirectory()) {
       await mkdir(dest, { recursive: true });
-      await copyTemplates(src, dest, vars);
+      await copyTemplates(src, dest, vars, skip);
     } else {
       const rendered = applyAgentSections(await readFile(src, 'utf8'), vars.agents)
         .replaceAll('__PROJECT_NAME__', vars.projectName)
@@ -525,6 +609,7 @@ async function copyTemplates(srcDir, destDir, vars) {
         .replaceAll('__PUBLIC_HOST__', vars.publicHost)
         .replaceAll('__APP_PORTS__', vars.appPortsBlock)
         .replaceAll('__AGENT_NPM_PKGS__', vars.agentNpmPkgs)
+        .replaceAll('__KATALYST_VERSION__', ENGINE_VERSION)
         .replaceAll('__WP_ADMIN_USER__', vars.wpAdminUser)
         .replaceAll('__WP_ADMIN_PASSWORD__', vars.wpAdminPassword)
         .replaceAll('__WP_ADMIN_EMAIL__', vars.wpAdminEmail);
@@ -544,8 +629,10 @@ async function applyConfig(targetDir, extra) {
   const cfgPath = join(targetDir, 'sandbox.config.json');
   const cfg = JSON.parse(await readFile(cfgPath, 'utf8'));
   // Which agents this sandbox was scaffolded with — informational (the actual
-  // installs are baked into workspace.Dockerfile at scaffold time).
+  // installs are baked into workspace.Dockerfile at scaffold time) — and the
+  // scaffolder version, so `update` can report what it upgraded from.
   cfg.agents = extra.agents ?? [];
+  cfg.scaffolderVersion = ENGINE_VERSION;
   if (extra.plugins?.length) cfg.plugins = [...(cfg.plugins ?? []), ...extra.plugins];
   if (extra.activate?.length) cfg.activate = [...(cfg.activate ?? []), ...extra.activate];
   if (extra.defines && Object.keys(extra.defines).length) {
@@ -606,6 +693,10 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
   }
   if (args.dir === 'list') {
     await listEnvironments();
+    return;
+  }
+  if (args.dir === 'update') {
+    await updateProject();
     return;
   }
   if (args.dir === 'menu') {

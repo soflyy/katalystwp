@@ -77,6 +77,16 @@ Environments (~/.katalystwp/environments.json):
 
 The registry is also what lets a new scaffold auto-pick a port that a *stopped* environment owns without conflict. Entries whose directory has been deleted are pruned automatically; setup logs live next to it in `~/.katalystwp/logs/`.
 
+## Updating a site's Katalyst files
+
+Generated projects are self-contained and frozen at scaffold time. The menu checks npm for a newer version at most once a day (fail-silent offline) and shows an **Update Katalyst** item when one exists; picking it runs the pinned-version updater and reopens the menu. Manually, from a site directory:
+
+```bash
+npx create-katalystwp@latest update
+```
+
+Update refreshes only Katalyst-owned files (`scripts/`, Dockerfiles, compose file, README, skills, the menu). It never touches `.env`, your `sandbox.config.json` settings (only the recorded `scaffolderVersion` is stamped), `scripts/user-setup.sh` / `scripts/dev.sh`, or site data — and npm scripts you added to `package.json` are preserved. Container-level changes apply on the next `npm run setup` (idempotent).
+
 Docker must be running. When it finishes you have a live site at **http://localhost:8080** — log in at `/wp-admin` with the credentials shown at the end (username `admin`, a per-site generated password — both saved in `.env` as `WP_ADMIN_USER` / `WP_ADMIN_PASSWORD`). At the end, press Enter to open wp-admin already logged in (a one-time login link minted through the pre-installed Agent Connector). Then:
 
 ```bash

@@ -9,10 +9,15 @@
  * stopping leaves it running), so nothing keeps eating resources by accident.
  */
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { connect } from 'node:net';
 import { emitKeypressEvents } from 'node:readline';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+
+// Substituted at scaffold/update time by create-katalystwp.
+const VERSION = '__KATALYST_VERSION__';
 
 // ---- styling (KatalystWP pink #ff2d78; honors NO_COLOR / pipes) ------------
 const COLOR = process.stdout.isTTY && !process.env.NO_COLOR;
@@ -142,6 +147,38 @@ const runInherit = (script) => new Promise((res) => {
   c.on('error', res);
 });
 
+// Daily, fail-silent check for a newer create-katalystwp (the menu offers an
+// "Update Katalyst" item when one exists). Throttled via a shared stamp file;
+// offline or slow registries just mean no update item this time.
+async function checkUpdate() {
+  if (process.env.KATALYSTWP_NO_UPDATE_CHECK) return null;
+  const stampPath = join(homedir(), '.katalystwp', 'update-check.json');
+  try {
+    const s = JSON.parse(readFileSync(stampPath, 'utf8'));
+    if (Date.now() - (s.checkedAt ?? 0) < 24 * 60 * 60 * 1000) return s.latest ?? null;
+  } catch { /* first check */ }
+  try {
+    const res = await fetch('https://registry.npmjs.org/create-katalystwp/latest', { signal: AbortSignal.timeout(2500) });
+    const latest = (await res.json()).version;
+    mkdirSync(join(homedir(), '.katalystwp'), { recursive: true });
+    writeFileSync(stampPath, JSON.stringify({ checkedAt: Date.now(), latest }) + '\n');
+    return latest;
+  } catch {
+    return null;
+  }
+}
+// Is version a newer than b? (plain x.y.z compare; false on anything weird)
+function newerThan(a, b) {
+  if (!a || !b) return false;
+  const pa = String(a).split('.').map(Number);
+  const pb = String(b).split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] || 0) > (pb[i] || 0)) return true;
+    if ((pa[i] || 0) < (pb[i] || 0)) return false;
+  }
+  return false;
+}
+
 // Exit stops the site; a second Ctrl+C while stopping leaves it running.
 async function stopSite() {
   let leaveRunning = false;
@@ -176,6 +213,9 @@ console.log(`  ${dim('Username')}   ${env.WP_ADMIN_USER || 'admin'}`);
 console.log(`  ${dim('Password')}   ${env.WP_ADMIN_PASSWORD || '(see .env)'}`);
 console.log('');
 
+const latest = await checkUpdate();
+const updateAvailable = newerThan(latest, VERSION);
+
 let first = true;
 for (;;) {
   const choice = await choose(
@@ -185,6 +225,7 @@ for (;;) {
       { value: 'site', label: 'Open the site', hint: 'front end' },
       ...agents.map((k) => ({ value: `agent:${k}`, label: `Open ${AGENT_LABELS[k]}`, hint: 'agent in the sandbox' })),
       { value: 'shell', label: 'Sandbox shell', hint: 'a terminal inside the sandbox — WordPress at ./wp' },
+      ...(updateAvailable ? [{ value: 'update', label: `Update ${pink('Katalyst')}`, hint: `v${VERSION} → v${latest}` }] : []),
       { value: 'exit', label: 'Exit', hint: 'stops the site — npm run katalyst brings it back' },
     ],
   );
@@ -204,6 +245,22 @@ for (;;) {
   } else if (choice === 'shell') {
     console.log(`\n  ${pink('Katalyst')} ${dim('sandbox shell — WordPress at ./wp · type')} exit ${dim('to return to Katalyst')}\n`);
     await runInherit('bash');
+  } else if (choice === 'update') {
+    // Pinned to the checked version (never a bare @latest), inherit the
+    // terminal so its output is visible, then re-exec the (possibly replaced)
+    // menu script.
+    console.log(`\n  ${dim('Updating Katalyst to')} v${latest}${dim('…')}\n`);
+    const NPX = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+    await new Promise((res) => {
+      const c = spawn(NPX, ['-y', `create-katalystwp@${latest}`, 'update'], { stdio: 'inherit' });
+      c.on('close', res);
+      c.on('error', res);
+    });
+    console.log(`  ${dim('Reopening the menu…')}\n`);
+    const c = spawn(process.execPath, ['scripts/katalyst.mjs'], { stdio: 'inherit' });
+    c.on('close', (code) => process.exit(typeof code === 'number' ? code : 0));
+    c.on('error', () => process.exit(1));
+    break;
   } else if (choice.startsWith('agent:')) {
     const k = choice.slice('agent:'.length);
     console.log(`\n  ${dim('Launching')} ${AGENT_LABELS[k]}${dim(' — when you quit it, you return to Katalyst')}\n`);

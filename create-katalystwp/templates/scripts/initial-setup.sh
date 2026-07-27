@@ -12,12 +12,21 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "→ Building and starting containers…"
-# --pull on the initial build so base images (wordpress:latest, node, …) are
-# the CURRENT latest, not whatever this machine cached weeks ago. Only here —
-# day-to-day `npm run start` stays offline-friendly.
-docker compose build --pull
-docker compose pull db playwright --ignore-buildable 2>/dev/null || docker compose pull db playwright || true
-docker compose up -d
+# Refresh base images (wordpress:latest, node, …) at most once a week — a
+# stale local cache otherwise pins new sites to an old WordPress forever.
+# Between refreshes (and offline — every pull is fail-soft) setup uses the
+# local cache with no registry round-trips.
+STAMP="$HOME/.katalystwp/image-pull-stamp"
+if [ ! -f "$STAMP" ] || [ -n "$(find "$STAMP" -mtime +7 2>/dev/null)" ]; then
+  echo "→ Checking for newer base images…"
+  if docker compose build --pull; then
+    docker compose pull db playwright >/dev/null 2>&1 || true
+    mkdir -p "$HOME/.katalystwp" && touch "$STAMP"
+  else
+    docker compose build   # offline / registry hiccup — build from cache
+  fi
+fi
+docker compose up -d --build
 
 echo "→ Waiting for WordPress files and the database…"
 tries=0
