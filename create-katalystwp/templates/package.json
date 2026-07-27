@@ -15,6 +15,8 @@
     "bash": "bash scripts/in-workspace.sh bash",
     "claude": "bash scripts/in-workspace.sh claude --dangerously-skip-permissions",
     "cursor": "bash scripts/in-workspace.sh cursor-agent --force --approve-mcps",
+    "codex": "bash scripts/in-workspace.sh codex",
+    "opencode": "bash scripts/in-workspace.sh opencode",
     "wp": "docker compose exec workspace wp",
     "reset": "docker compose down && rm -rf db wp workspace && bash scripts/initial-setup.sh"
   }

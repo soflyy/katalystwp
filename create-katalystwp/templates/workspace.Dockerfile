@@ -32,22 +32,24 @@ RUN printf 'path: /home/node/wp\n' > /etc/wp-cli.yml
 # Composer (PHP dependency manager), available globally as `composer`.
 COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
 
-# Headless coding agents — Claude Code, OpenAI Codex, and opencode — plus the
-# mcp-wordpress-remote stdio proxy the workspace agents use to reach the site's
-# MCP server. Pre-installing the proxy means the `npx @automattic/mcp-wordpress-remote`
-# in connect-mcp.sh resolves instantly (and offline) instead of fetching on first use.
-RUN npm install -g @anthropic-ai/claude-code @openai/codex opencode-ai @automattic/mcp-wordpress-remote
+# The AI coding agents selected at scaffold time (nothing is installed
+# unasked), plus — always — the mcp-wordpress-remote stdio proxy the agents use
+# to reach the site's MCP server. Pre-installing the proxy means the
+# `npx @automattic/mcp-wordpress-remote` in connect-mcp.sh resolves instantly
+# (and offline) instead of fetching on first use.
+RUN npm install -g __AGENT_NPM_PKGS__@automattic/mcp-wordpress-remote
 
+# >>> agent:claude
 # Seed Claude's onboarding flags so a token-authenticated profile
 # (CLAUDE_CODE_OAUTH_TOKEN) goes straight to the prompt instead of stopping on the
 # three first-run gates: the "Select login method" picker, the
 # --dangerously-skip-permissions acceptance warning, and the "trust this folder?"
 # dialog. This is the same mechanism the standalone agent-sandbox uses — and it
-# works here too: the ENTRYPOINT runs for the container's main process
-# (`sleep infinity`) at startup, seeding the persisted /home/node BEFORE any
-# `docker compose exec` reaches Claude. It re-runs on every start and merges into
-# any existing config, so it stays correct across rebuilds and after a manual
-# /login. The home dir is pinned to /home/node (the workspace root by design).
+# works here too: the ENTRYPOINT (agent-entrypoint, below) runs for the
+# container's main process (`sleep infinity`) at startup, seeding the persisted
+# /home/node BEFORE any `docker compose exec` reaches Claude. It re-runs on
+# every start and merges into any existing config, so it stays correct across
+# rebuilds and after a manual /login. The home dir is pinned to /home/node.
 RUN printf '%s\n' \
   'const fs=require("fs"),h="/home/node",p=h+"/.claude.json";' \
   'let c={};try{c=JSON.parse(fs.readFileSync(p,"utf8"))}catch{}' \
@@ -55,23 +57,29 @@ RUN printf '%s\n' \
   'if(!c.theme)c.theme="dark";' \
   'c.projects=c.projects||{};c.projects[h]={...(c.projects[h]||{}),hasTrustDialogAccepted:true};' \
   'fs.writeFileSync(p,JSON.stringify(c,null,2));' \
-  > /usr/local/bin/seed-claude.js \
-  && printf '%s\n' '#!/bin/sh' 'node /usr/local/bin/seed-claude.js 2>/dev/null || true' 'exec "$@"' \
+  > /usr/local/bin/seed-claude.js
+# <<< agent:claude
+
+# The container entrypoint: runs the Claude onboarding seed when present (a
+# no-op in sandboxes scaffolded without Claude Code), then hands off to CMD.
+RUN printf '%s\n' '#!/bin/sh' 'node /usr/local/bin/seed-claude.js 2>/dev/null || true' 'exec "$@"' \
   > /usr/local/bin/agent-entrypoint \
   && chmod 0755 /usr/local/bin/agent-entrypoint
 
+# >>> agent:cursor
 # Cursor's CLI agent (`cursor-agent`, also aliased `agent`). Its official
 # installer drops the binary under $HOME/.local/share and symlinks it into
 # $HOME/.local/bin. At runtime ./workspace is bind-mounted over /home/node, which
 # would shadow anything installed into the node user's home — so we install as
 # root (HOME=/root here) and move the whole versioned tree to /usr/local/share,
 # symlinked onto the PATH at /usr/local/bin. That survives the bind mount and is
-# visible to the node user, mirroring how Claude Code lands in /usr/local.
+# visible to the node user, mirroring how the npm-installed agents land in /usr/local.
 RUN curl https://cursor.com/install -fsS | bash \
     && mv "$HOME/.local/share/cursor-agent" /usr/local/share/cursor-agent \
     && ln -sf /usr/local/share/cursor-agent/versions/*/cursor-agent /usr/local/bin/cursor-agent \
     && ln -sf /usr/local/bin/cursor-agent /usr/local/bin/agent \
     && cursor-agent --version
+# <<< agent:cursor
 
 # WordPress MCP helper: a small Node CLI that talks to the site's MCP server over
 # HTTP (initialize → capture Mcp-Session-Id → call abilities), reading the

@@ -1,20 +1,39 @@
 # create-katalystwp
 
-Scaffold a local **WordPress + AI-agent** development environment (Docker Compose) — WordPress + MariaDB plus an isolated **workspace** container with Node, [Claude Code](https://claude.com/claude-code), the [Cursor CLI](https://cursor.com/docs/cli), PHP, and WP-CLI ready to go.
+Scaffold a local **WordPress + AI-agent** development environment (Docker Compose) — WordPress + MariaDB plus an isolated **workspace** container with Node, PHP, WP-CLI, and the AI coding agents **you choose**: [Claude Code](https://claude.com/claude-code) (the default), the [Cursor CLI](https://cursor.com/docs/cli), Codex, OpenCode — or none.
 
-It scaffolds the project **and runs the initial setup** for you — `docker compose up`, then installs WordPress and the configured plugins — so you land on a working site. Pass `--scaffold-only` to just write files and skip Docker. The generated project ships npm scripts (`npm run start`, `npm run bash`, `npm run claude`, `npm run cursor`, …) for everyday use.
+It scaffolds the project **and runs the initial setup** for you — `docker compose up`, then installs WordPress and the configured plugins — so you land on a working site. Pass `--scaffold-only` to just write files and skip Docker. The generated project ships npm scripts (`npm run start`, `npm run bash`, plus one per installed agent — `npm run claude`, …) for everyday use.
 
 ## Usage
 
 ```bash
 # npm create form (the create- prefix enables this):
-npm create katalystwp@latest my-site
+npm create katalystwp@latest
+```
 
+Run in a terminal, it asks a few questions (Enter accepts the default; anything you already gave as an argument or flag is never asked):
+
+1. **Project directory** — suggested `my-site` (or pass it as the first argument)
+2. **Host port** for the site — the default offered is the first free port from `8080` that no other environment claims (busy ports are rejected with a re-ask)
+3. **AI coding agents** to install in the workspace — arrow keys + space to pick any of Claude Code (preselected), Cursor CLI, Codex CLI, OpenCode; confirm with nothing selected for a plain no-agent workspace. Only what you pick gets installed
+4. **WordPress plugins** to pre-install — wordpress.org slugs or `.zip` URLs, default none
+
+During setup only the step lines are shown (`→ Installing WordPress…`, `✓ …`); the full output — Docker build and all — is captured to `~/.katalystwp/logs/<name>.setup.log` and its tail is printed automatically if setup fails. `--verbose` streams everything.
+
+Non-interactively (CI, scripts, or `--yes`) it takes those defaults and prints them. Flags answer a question in advance — flagged choices are never asked:
+
+```bash
 # or directly with npx:
 npx create-katalystwp my-site
 
-# choose a host port (default 8080):
-npx create-katalystwp my-site --port=8090
+# accept all defaults, no questions (port 8080, Claude Code, no extra plugins):
+npx create-katalystwp my-site --yes
+
+# choose everything up front:
+npx create-katalystwp my-site --port=8090 --agents=claude,cursor --plugins=akismet
+
+# no agents — plain WordPress + workspace (Node, PHP, WP-CLI, MCP servers):
+npx create-katalystwp my-site --agents=none
 
 # run a setup script in the workspace, add wp-config constants, and activate
 # plugins (in order) it drops into wp-content — see "Customizing setup" below:
@@ -29,6 +48,26 @@ npx create-katalystwp my-site --scaffold-only
 
 > Through `npm create`, put the flags after `--`, e.g.
 > `npm create katalystwp@latest my-site -- --port=8090`.
+
+## Your environments
+
+Every environment you scaffold is recorded in `~/.katalystwp/environments.json` (shared by all `create-<brand>` wrappers). List them — with live up/stopped status — any time:
+
+```bash
+npx create-katalystwp list
+```
+
+```
+Environments (~/.katalystwp/environments.json):
+
+  NAME       PORT  STATUS   AGENTS         DIR
+  my-site    8080  up       claude         /Users/you/my-site
+  client-b   8081  stopped  claude,cursor  /Users/you/client-b
+
+  Start/stop one: cd <dir> && npm run start | npm run stop
+```
+
+The registry is also what lets a new scaffold auto-pick a port that a *stopped* environment owns without conflict. Entries whose directory has been deleted are pruned automatically; setup logs live next to it in `~/.katalystwp/logs/`.
 
 Docker must be running. When it finishes you have a live site at **http://localhost:8080** — log in at `/wp-admin` with `admin` / `password` (the default; configurable in `.env` via `WP_ADMIN_USER` / `WP_ADMIN_PASSWORD`). Then:
 
@@ -94,6 +133,12 @@ On the first `npm run setup` the **one-time** steps run in order: install WordPr
 
   > **Why key:value rather than a raw `wp-config` snippet?** You don't have to worry about *where* in the file each `define()` lands or about duplicating one that already exists — `wp config set` handles placement and is idempotent.
 
+- **`--agents=LIST`** — which AI coding agents to install in the workspace image: comma-separated from `claude`, `cursor`, `codex`, `opencode`, or `all` / `none`. Default: `claude`. Only the selected agents are installed, get an npm script (`npm run <agent>`), and are wired to the MCP servers — nothing else is baked in.
+
+- **`--plugins=LIST`** — WordPress plugins to pre-install: comma-separated wordpress.org slugs or `.zip` URLs. Shorthand for adding entries to `plugins` in `sandbox.config.json` (see below), which offers per-plugin options.
+
+- **`--yes` / `-y`** — accept every default without asking (prompts only appear in an interactive terminal anyway).
+
 - **`--activate=a,b,c`** — plugin slugs to activate, in this exact order, **after** the setup script. This is for plugins that are already present (e.g. dropped into `wp-content` by your script) — there's nothing to download, just activate. For plugins installed from wordpress.org or a `.zip`, use `plugins` in `sandbox.config.json` (see below) instead.
 
 - **`--app-ports=LIST`** — host ports to publish on the **workspace** container for dev servers your setup/dev scripts run — e.g. a Next.js app on 3000. A bare `3000` publishes `3000:3000`; `9101:3000` maps host 9101 to container 3000; comma-separate for several (one mapping per container port — a later entry for the same container port replaces the earlier one, so a CLI flag overrides a preset's). The `dev` container **shares the workspace's network namespace**, so one list covers a server started by the dev script *or* by an agent in the workspace — and other containers (WordPress PHP, the Playwright browser) reach it at `http://workspace:<port>` either way. The server must listen on `0.0.0.0` (most dev servers, incl. `next dev`, do by default) — one bound to `127.0.0.1` is invisible to the published port *and* to other containers. ⚠️ Published ports bind `0.0.0.0` and **bypass ufw-style host firewalls**; on an internet-facing host, restrict them upstream (cloud firewall/VPN).
@@ -123,6 +168,7 @@ The flags above just write into this file; you can also edit it directly and `np
 
 ```json
 {
+  "agents": ["claude"],
   "plugins": [
     "ai",
     { "source": "akismet", "activate": false, "version": "5.3" },
@@ -134,6 +180,8 @@ The flags above just write into this file; you can also edit it directly and `np
   "activate": ["oxygen-elements", "breakdance-elements", "breakdance-main"]
 }
 ```
+
+- `agents` — a record of which AI agents this sandbox was scaffolded with (informational: the installs are baked into `workspace.Dockerfile` at scaffold time, so editing this list doesn't change the image).
 
 - `plugins` — installed (and activated unless `"activate": false`) from a wordpress.org slug or a URL/path to a `.zip`. `version` is optional (slugs only).
 - `defines` — `wp-config.php` constants (see `--defines` above).
@@ -215,6 +263,7 @@ create({
   preset: {
     name: 'breakdance-wp',
     plugins: [{ source: 'https://example.com/breakdance.zip', activate: true }],
+    agents: ['claude'], // default agent selection for your brand (user can still override)
     defines: { WP_DEBUG: true, WP_MEMORY_LIMIT: '512M' },
     activate: ['oxygen-elements', 'breakdance-elements', 'breakdance-main'],
     setupScript: 'set -euo pipefail\ncd /home/node\n# …clone/build/seed here…\n',

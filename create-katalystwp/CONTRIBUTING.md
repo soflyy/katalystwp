@@ -20,6 +20,8 @@ By default the scaffolder also runs `npm run setup` in the generated project (do
 
 ```bash
 cd <this-repo>/create-katalystwp
+npm install            # once — the interactive prompts use @clack/prompts
+                       # (non-interactive runs, e.g. the devbox server, don't need it)
 
 # 1. Scaffold into a throwaway dir (use a port that won't clash with other instances)
 #    Drop --scaffold-only to also build + boot + install in one go (Docker must be running).
