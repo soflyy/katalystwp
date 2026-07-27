@@ -60,9 +60,17 @@ const run = (args, opts = {}) => new Promise((res) => {
   const c = spawn(args[0], args.slice(1), opts);
   let out = '';
   if (c.stdout) c.stdout.on('data', (d) => { out += d; });
+  if (c.stderr) c.stderr.on('data', (d) => { out += d; });
   c.on('close', (code) => res({ code, out }));
-  c.on('error', () => res({ code: 1, out }));
+  c.on('error', (err) => res({ code: 1, out: out + String(err) }));
 });
+
+// Logs stay hidden only while everything works — on failure, show them.
+const showFailure = (title, out, hint) => {
+  console.error(`\n✖ ${title}\n`);
+  for (const l of out.trimEnd().split('\n').slice(-25)) console.error(`  ${l}`);
+  console.error(`\n  ${hint}\n`);
+};
 
 const tick = (msg) => process.stdout.write(`\r\u001b[2K  ${pink('…')} ${dim(msg)}`);
 const tickDone = () => process.stdout.write('\r\u001b[2K');
@@ -184,14 +192,21 @@ function newerThan(a, b) {
 async function stopSite() {
   let leaveRunning = false;
   tick('Stopping the site — Ctrl+C again to leave it running');
-  const c = spawn(NPM, ['run', 'stop'], { stdio: 'ignore' });
+  const c = spawn(NPM, ['run', 'stop']);
+  let out = '';
+  c.stdout.on('data', (d) => { out += d; });
+  c.stderr.on('data', (d) => { out += d; });
   const onInt = () => { leaveRunning = true; c.kill('SIGTERM'); };
   process.on('SIGINT', onInt);
-  await new Promise((res) => { c.on('close', res); c.on('error', res); });
+  const code = await new Promise((res) => { c.on('close', res); c.on('error', () => res(1)); });
   process.removeListener('SIGINT', onInt);
   tickDone();
-  if (leaveRunning) console.log(`  ${dim('Leaving the site running.')}`);
-  return !leaveRunning;
+  if (leaveRunning) {
+    console.log(`  ${dim('Leaving the site running.')}`);
+  } else if (code !== 0) {
+    showFailure('Stopping the site failed. Docker output:', out, 'Try: npm run stop   (container status: npm run ps)');
+  }
+  return !leaveRunning && code === 0;
 }
 
 // ---- main ------------------------------------------------------------------
@@ -203,8 +218,22 @@ if (!process.stdin.isTTY || !process.stdout.isTTY) {
 
 if (!(await portUp()) && !process.env.KATALYSTWP_NO_START) {
   tick('Starting the site');
-  await run([NPM, 'run', 'start']);
+  const { code, out } = await run([NPM, 'run', 'start']);
+  // compose returning 0 isn't proof — wait for something to actually listen.
+  let up = false;
+  for (let i = 0; i < 20 && !up; i++) {
+    up = await portUp();
+    if (!up) await new Promise((r) => setTimeout(r, 500));
+  }
   tickDone();
+  if (code !== 0 || !up) {
+    showFailure(
+      code !== 0 ? 'The site failed to start. Docker output:' : `The site started but nothing is answering on port ${PORT}. Output:`,
+      out,
+      'Fix and retry with: npm run start   (live container logs: npm run logs)',
+    );
+    process.exit(1);
+  }
 }
 
 console.log('');
