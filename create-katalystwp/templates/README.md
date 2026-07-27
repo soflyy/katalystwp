@@ -51,7 +51,7 @@ npm run start     # build + start containers
 | `npm run katalyst` | The Katalyst menu: starts the site if stopped, site links, one-click wp-admin login, launch an agent, sandbox shell. Exit stops the site |
 | `npm run bash` | Shell into the workspace container (lands in the workspace root `/home/node`, with WordPress at `wp/`) |
 # >>> agent:claude
-| `npm run claude` | Launch Claude Code in the workspace (`--dangerously-skip-permissions`, safe because it's contained) |
+| `npm run claude` | Launch Claude Code in the workspace |
 # <<< agent:claude
 # >>> agent:cursor
 | `npm run cursor` | Launch the Cursor CLI agent in the workspace (`--force --approve-mcps`, safe because it's contained) |
