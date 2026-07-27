@@ -12,7 +12,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "→ Building and starting containers…"
-docker compose up -d --build
+# --pull on the initial build so base images (wordpress:latest, node, …) are
+# the CURRENT latest, not whatever this machine cached weeks ago. Only here —
+# day-to-day `npm run start` stays offline-friendly.
+docker compose build --pull
+docker compose pull db playwright --ignore-buildable 2>/dev/null || docker compose pull db playwright || true
+docker compose up -d
 
 echo "→ Waiting for WordPress files and the database…"
 tries=0

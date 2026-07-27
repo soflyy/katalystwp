@@ -67,6 +67,25 @@ export const dim = (s) => (COLOR_ON ? `\u001b[2m${s}\u001b[22m` : s);
 // and piped output gets the URL untouched). Brand-pink when colors are on.
 const termLink = (url) => (process.stdout.isTTY ? pink(`\u001b]8;;${url}${url}\u001b]8;;`) : url);
 
+// Suggested site names: memorable, unique-ish, zero decisions required —
+// "pragmatic-monkey-23". Only a suggestion; the user can type anything.
+const NAME_ADJECTIVES = [
+  'pragmatic', 'angry', 'sleepy', 'brave', 'clever', 'dapper', 'eager', 'fuzzy',
+  'gentle', 'happy', 'jolly', 'keen', 'lively', 'mellow', 'nimble', 'plucky',
+  'quirky', 'rusty', 'snappy', 'tidy', 'witty', 'zesty', 'bold', 'cosmic',
+  'daring', 'electric', 'fancy', 'groovy', 'humble', 'iconic',
+];
+const NAME_ANIMALS = [
+  'monkey', 'gerbil', 'otter', 'badger', 'ferret', 'walrus', 'pelican', 'lemur',
+  'gecko', 'heron', 'ibex', 'jackal', 'koala', 'lynx', 'marmot', 'narwhal',
+  'ocelot', 'panda', 'quokka', 'raccoon', 'stoat', 'toucan', 'urchin', 'vole',
+  'wombat', 'yak', 'zebra', 'beaver', 'condor', 'dingo',
+];
+export function generateSiteName() {
+  const pick = (arr) => arr[randomBytes(1)[0] % arr.length];
+  return `${pick(NAME_ADJECTIVES)}-${pick(NAME_ANIMALS)}-${10 + (randomBytes(1)[0] % 90)}`;
+}
+
 // Shells don't expand ~ inside interactive answers (and not in every arg
 // position either) — do it ourselves so "~/Dev/my-site" never becomes a
 // literal "~" directory.
@@ -654,8 +673,15 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
   const canPrompt = !args.yes && process.stdin.isTTY && process.stdout.isTTY;
   const promptRan = undecided && canPrompt;
   if (promptRan) {
+    // Suggest a fun unique name whose default location doesn't already exist.
+    let suggested = generateSiteName();
+    for (let i = 0; i < 5; i++) {
+      const exists = await stat(join(homedir(), 'katalyst-sites', suggested)).then(() => true).catch(() => false);
+      if (!exists) break;
+      suggested = generateSiteName();
+    }
     ({ dir: args.dir, agents } = await promptForChoices({
-      dir: args.dir, defaultDir: 'my-site', agents, defaultAgents,
+      dir: args.dir, defaultDir: suggested, agents, defaultAgents,
     }));
   }
   agents ??= defaultAgents;
@@ -845,8 +871,6 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
       child.on('close', res);
       child.on('error', res);
     });
-    // The menu's cheat sheet says `npm run katalyst` — add where to run it.
-    console.log(`  ${dim('(from')} ${cd}${dim(')')}\n`);
   } else {
     console.log('');
     console.log(`  ${dim('WordPress')}  ${termLink(`http://${args.publicHost}:${args.port}`)}`);

@@ -191,8 +191,10 @@ for (;;) {
   first = false;
   if (choice === null || choice === 'exit') {
     const stopped = await stopSite();
-    console.log(`\n  ${dim(stopped ? 'Site stopped. Come back anytime:' : 'Come back anytime:')}`);
-    console.log('  npm run katalyst\n');
+    console.log(`\n  ${stopped ? `${dim('Site stopped.')} ` : ''}${dim('Your site lives at')} ${process.cwd()}`);
+    console.log(`  ${dim('To start it up again and use Katalyst:')}`);
+    console.log(`    cd ${process.cwd()}`);
+    console.log('    npm run katalyst\n');
     process.exit(0);
   }
   if (choice === 'admin') {
