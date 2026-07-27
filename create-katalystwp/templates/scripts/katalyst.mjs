@@ -9,7 +9,7 @@
  * stopping leaves it running), so nothing keeps eating resources by accident.
  */
 
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { connect } from 'node:net';
 import { emitKeypressEvents } from 'node:readline';
@@ -216,6 +216,32 @@ if (!process.stdin.isTTY || !process.stdout.isTTY) {
   process.exit(0);
 }
 
+// One Katalyst per site: a second instance would fight this one for the
+// terminal and the containers. The lock records our PID; a stale lock (dead
+// PID, or a recycled PID that isn't a katalyst process) is taken over.
+const LOCK = '.katalyst.lock';
+let lockOwned = false;
+try {
+  const lock = JSON.parse(readFileSync(LOCK, 'utf8'));
+  let alive = false;
+  try { process.kill(lock.pid, 0); alive = true; } catch { /* dead */ }
+  if (alive) {
+    const { out } = await run(['ps', '-o', 'tty=,etime=,command=', '-p', String(lock.pid)]);
+    const detail = out.trim();
+    // ps unavailable (or ambiguous) → assume it's real rather than clobber it.
+    if (!detail || /katalyst\.mjs|npm/.test(detail)) {
+      console.error(`✖ Katalyst is already running for this site (PID ${lock.pid}${lock.startedAt ? `, since ${lock.startedAt}` : ''}).`);
+      if (detail) console.error(`  ${dim('tty / elapsed / command:')} ${detail}`);
+      console.error('  Use it in that terminal — or if it\'s lost/detached, stop it with:');
+      console.error(`    kill ${lock.pid}`);
+      process.exit(1);
+    }
+  }
+} catch { /* no lock */ }
+writeFileSync(LOCK, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }) + '\n');
+lockOwned = true;
+process.on('exit', () => { if (lockOwned) { try { unlinkSync(LOCK); } catch { /* gone */ } } });
+
 if (!(await portUp()) && !process.env.KATALYSTWP_NO_START) {
   tick('Starting the site');
   const { code, out } = await run([NPM, 'run', 'start']);
@@ -289,6 +315,9 @@ for (;;) {
       c.on('error', res);
     });
     console.log(`  ${dim('Reopening the menu…')}\n`);
+    // Hand the lock to the fresh menu instance we're about to spawn.
+    lockOwned = false;
+    try { unlinkSync(LOCK); } catch { /* gone */ }
     const c = spawn(process.execPath, ['scripts/katalyst.mjs'], { stdio: 'inherit' });
     c.on('close', (code) => process.exit(typeof code === 'number' ? code : 0));
     c.on('error', () => process.exit(1));
