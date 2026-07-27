@@ -57,15 +57,15 @@ const DEFAULT_AGENTS = ['claude'];
 // color elsewhere. All styling is disabled when piped or NO_COLOR is set.
 const COLOR_ON = process.stdout.isTTY && !process.env.NO_COLOR;
 const PINK_ON = (process.env.COLORTERM || '').includes('truecolor')
-  ? '[38;2;255;45;120m'
-  : '[38;5;198m';
-export const pink = (s) => (COLOR_ON ? `${PINK_ON}${s}[39m` : s);
-export const dim = (s) => (COLOR_ON ? `[2m${s}[22m` : s);
+  ? '\u001b[38;2;255;45;120m'
+  : '\u001b[38;5;198m';
+export const pink = (s) => (COLOR_ON ? `${PINK_ON}${s}\u001b[39m` : s);
+export const dim = (s) => (COLOR_ON ? `\u001b[2m${s}\u001b[22m` : s);
 
 // OSC 8 terminal hyperlink (clickable in iTerm2, Windows Terminal, VS Code,
 // and most modern emulators; unsupported terminals just show the plain URL,
 // and piped output gets the URL untouched). Brand-pink when colors are on.
-const termLink = (url) => (process.stdout.isTTY ? pink(`]8;;${url}${url}]8;;`) : url);
+const termLink = (url) => (process.stdout.isTTY ? pink(`\u001b]8;;${url}${url}\u001b]8;;`) : url);
 
 // Shells don't expand ~ inside interactive answers (and not in every arg
 // position either) — do it ourselves so "~/Dev/my-site" never becomes a
@@ -459,14 +459,25 @@ async function promptForChoices({ dir, defaultDir, agents, defaultAgents }) {
   };
 
   if (dir == null) {
-    // Re-ask on a non-empty directory so the user doesn't answer everything
-    // else first and only then hit the "not empty" error.
+    console.log(`\nWelcome to ${pink('Katalyst')} — let's create a WordPress environment.\n`);
+    const name = answer(await ui.question('Site name', { placeholder: defaultDir, defaultValue: defaultDir })) || defaultDir;
+    // Where it lives: a tidy ~/katalyst-sites/<name> by default (everything in
+    // one findable place), this folder, or any path. Re-ask on a non-empty
+    // choice so the user never answers everything and then hits an error.
+    const homeDir = join(homedir(), 'katalyst-sites', name);
     for (;;) {
-      const a = expandTilde(answer(await ui.question('Project directory', { placeholder: defaultDir, defaultValue: defaultDir })) || defaultDir);
-      const existing = await readdir(resolve(a)).catch(() => []);
+      const where = answer(await ui.choose('Where should it live?', [
+        { value: homeDir, label: `~/katalyst-sites/${name}`, hint: 'recommended' },
+        { value: resolve(name), label: `./${name}`, hint: 'inside the current folder' },
+        { value: ' custom', label: 'Somewhere else…', hint: 'type a path' },
+      ]));
+      const candidate = where === ' custom'
+        ? expandTilde(answer(await ui.question('Path for the site', { placeholder: `~/katalyst-sites/${name}` })) || homeDir)
+        : where;
+      const existing = await readdir(resolve(candidate)).catch(() => []);
       const blocking = existing.filter((f) => !ALLOWED_EXISTING.has(f));
-      if (!blocking.length) { dir = a; break; }
-      console.log(`  ${pink('✖')} ${resolve(a)} is not empty — pick a new or empty directory.`);
+      if (!blocking.length) { dir = candidate; break; }
+      console.log(`  ${pink('✖')} ${resolve(candidate)} is not empty — pick a new or empty location.`);
     }
   }
   if (agents == null) {
@@ -479,117 +490,6 @@ async function promptForChoices({ dir, defaultDir, agents, defaultAgents }) {
   return { dir, agents };
 }
 
-// `npx create-<brand> menu` — reopen the Katalyst hub for the project in the
-// current directory (what the generated `npm run katalyst` script calls).
-// Reads the project's own .env and sandbox.config.json; no registry needed.
-async function runMenuForCwd(pkg) {
-  const env = {};
-  try {
-    for (const line of (await readFile('.env', 'utf8')).split('\n')) {
-      const m = line.match(/^([A-Z_]+)=(.*)$/);
-      if (m) env[m[1]] = m[2];
-    }
-  } catch {
-    console.error('✖ No .env here — run this from a Katalyst project directory (or via npm run katalyst).');
-    process.exit(1);
-  }
-  let cfg = {};
-  try { cfg = JSON.parse(await readFile('sandbox.config.json', 'utf8')); } catch { /* menu still works */ }
-  const port = env.WP_PORT || '8080';
-  const publicHost = env.PUBLIC_HOST || 'localhost';
-  const agents = (cfg.agents ?? []).filter((k) => AGENTS[k]);
-  console.log('');
-  console.log(`  ${dim('WordPress')}  ${termLink(`http://${publicHost}:${port}`)}`);
-  console.log(`  ${dim('Admin')}      ${termLink(`http://${publicHost}:${port}/wp-admin`)}`);
-  if (env.WP_ADMIN_USER) console.log(`  ${dim('Username')}   ${env.WP_ADMIN_USER}`);
-  if (env.WP_ADMIN_PASSWORD) console.log(`  ${dim('Password')}   ${env.WP_ADMIN_PASSWORD}`);
-  console.log('');
-  if (process.stdin.isTTY && process.stdout.isTTY) {
-    await environmentMenu({ targetDir: process.cwd(), cd: '.', publicHost, port, agents, pkg });
-  } else {
-    printCheatSheet({ cd: '.', agents, pkg });
-  }
-}
-
-// The cheat sheet for getting back into a site — printed when the menu exits
-// (and by non-interactive runs).
-function printCheatSheet({ cd, agents, pkg }) {
-  console.log(`\n  ${dim('Come back anytime:')}`);
-  if (cd !== '.') console.log(`  cd ${cd}`);
-  const rows = [
-    ['npm run katalyst', 'this menu — site links, agents, shell'],
-    ...agents.map((k) => [`npm run ${k}`, `${AGENTS[k].label} in the sandbox`]),
-    ['npm run bash', 'sandbox shell'],
-    ['npm run stop', 'stop the site (npm run start brings it back)'],
-    [`npx ${pkg} list`, 'all your environments'],
-  ];
-  const w = Math.max(...rows.map(([c]) => c.length)) + 3;
-  for (const [c, d] of rows) console.log(`  ${c.padEnd(w)}${dim(`# ${d}`)}`);
-  console.log('');
-}
-
-// The Katalyst hub: shown after a create finishes and by `npm run katalyst` /
-// the `menu` subcommand. Every action returns here — terminal-takeover actions
-// (agents, shell) come back when they exit; Exit (or Ctrl+C) prints the cheat
-// sheet. TTY only.
-async function environmentMenu({ targetDir, cd, publicHost, port, agents, pkg }) {
-  let ui;
-  try {
-    ui = await import('./ui.js');
-  } catch {
-    printCheatSheet({ cd, agents, pkg });
-    return;
-  }
-  const siteUrl = `http://${publicHost}:${port}`;
-  const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-  const runHere = (script) => new Promise((res) => {
-    const child = spawn(npm, ['run', script], { cwd: targetDir, stdio: 'inherit' });
-    child.on('close', res);
-    child.on('error', res);
-  });
-
-  let first = true;
-  for (;;) {
-    const choice = await ui.choose(
-      first ? `Welcome to ${pink('Katalyst')}. What do you want to do?` : 'What next?',
-      [
-        { value: 'admin', label: 'Open WP Admin', hint: 'logged in, one-click' },
-        { value: 'site', label: 'Open the site', hint: 'front end' },
-        ...agents.map((k) => ({ value: `agent:${k}`, label: `Open ${AGENTS[k].label}`, hint: 'agent in the sandbox' })),
-        { value: 'shell', label: 'Sandbox shell', hint: 'a terminal inside the sandbox — WordPress at ./wp' },
-        { value: 'exit', label: 'Exit', hint: 'shows how to come back' },
-      ],
-    );
-    first = false;
-    if (ui.isCancel(choice) || choice === 'exit') break;
-    if (choice === 'admin') {
-      // One-time links are single-use with a short expiry — mint per open.
-      const minted = await mintAdminLoginUrl(targetDir);
-      let target = minted ?? `${siteUrl}/wp-admin`;
-      if (minted) {
-        try {
-          const u = new URL(minted);
-          u.hostname = publicHost;
-          u.port = String(port);
-          target = u.toString();
-        } catch { /* use as minted */ }
-      }
-      if (process.env.KATALYSTWP_NO_OPEN) console.log(`  ${dim('One-click login:')} ${target}`);
-      else openBrowser(target);
-    } else if (choice === 'site') {
-      if (process.env.KATALYSTWP_NO_OPEN) console.log(`  ${dim('Site:')} ${siteUrl}`);
-      else openBrowser(siteUrl);
-    } else if (choice === 'shell') {
-      console.log(`\n  ${pink('Katalyst')} ${dim('sandbox shell — WordPress at ./wp · type')} exit ${dim('to return to Katalyst')}\n`);
-      await runHere('bash');
-    } else if (choice.startsWith('agent:')) {
-      const k = choice.slice('agent:'.length);
-      console.log(`\n  ${dim('Launching')} ${AGENTS[k].label}${dim(' — when you quit it, you return to Katalyst')}\n`);
-      await runHere(k);
-    }
-  }
-  printCheatSheet({ cd, agents, pkg });
-}
 
 async function copyTemplates(srcDir, destDir, vars) {
   for (const entry of await readdir(srcDir, { withFileTypes: true })) {
@@ -690,8 +590,15 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
     return;
   }
   if (args.dir === 'menu') {
-    await runMenuForCwd(pkg);
-    return;
+    // The menu ships WITH each project (scripts/katalyst.mjs — offline, no
+    // version drift); this subcommand just delegates for convenience. The
+    // script prints its own error when run outside a Katalyst project.
+    const code = await new Promise((res) => {
+      const child = spawn(process.execPath, ['scripts/katalyst.mjs'], { stdio: 'inherit' });
+      child.on('close', res);
+      child.on('error', () => res(1));
+    });
+    process.exit(typeof code === 'number' ? code : 1);
   }
 
   // Read & validate the file-backed inputs first, so a bad --setup-script /
@@ -927,23 +834,29 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
     process.exit(1);
   }
 
-  // Compact summary: what you need to use the site, then the two or three
-  // commands you'll actually run next. Everything else is in the project README.
-  console.log(`\n${dim('─'.repeat(48))}\n`);
-  console.log(`  ${dim('WordPress')}  ${termLink(`http://${args.publicHost}:${args.port}`)}`);
-  console.log(`  ${dim('Admin')}      ${termLink(`http://${args.publicHost}:${args.port}/wp-admin`)}`);
-  console.log(`  ${dim('Username')}   ${adminUser}`);
-  console.log(`  ${dim('Password')}   ${adminPass}`);
-  for (const p of appPorts) {
-    console.log(`  ${dim('App')}        ${termLink(`http://${args.publicHost}:${p.host}`)} → workspace:${p.container}`);
-  }
-  console.log('');
+  console.log(`\n${dim('─'.repeat(48))}`);
 
-  // Interactive terminals land on the Katalyst hub; everything else gets the
-  // printed commands (the menu's Exit prints the same cheat sheet).
+  // Interactive terminals land on the Katalyst hub — the project's OWN
+  // scripts/katalyst.mjs (it prints the summary card, then the menu; its Exit
+  // stops the site). Everything else gets the card + printed commands.
   if (process.stdin.isTTY && process.stdout.isTTY) {
-    await environmentMenu({ targetDir, cd, publicHost: args.publicHost, port: args.port, agents, pkg });
+    await new Promise((res) => {
+      const child = spawn(process.execPath, ['scripts/katalyst.mjs'], { cwd: targetDir, stdio: 'inherit' });
+      child.on('close', res);
+      child.on('error', res);
+    });
+    // The menu's cheat sheet says `npm run katalyst` — add where to run it.
+    console.log(`  ${dim('(from')} ${cd}${dim(')')}\n`);
   } else {
+    console.log('');
+    console.log(`  ${dim('WordPress')}  ${termLink(`http://${args.publicHost}:${args.port}`)}`);
+    console.log(`  ${dim('Admin')}      ${termLink(`http://${args.publicHost}:${args.port}/wp-admin`)}`);
+    console.log(`  ${dim('Username')}   ${adminUser}`);
+    console.log(`  ${dim('Password')}   ${adminPass}`);
+    for (const p of appPorts) {
+      console.log(`  ${dim('App')}        ${termLink(`http://${args.publicHost}:${p.host}`)} → workspace:${p.container}`);
+    }
+    console.log('');
     console.log(`  cd ${cd}`);
     printCmds([
       ['npm run katalyst', 'the Katalyst menu — site links, agents, shell'],
