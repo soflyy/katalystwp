@@ -18,31 +18,25 @@ All data lives in bind-mounted folders in this directory (`db/` and `workspace/`
 
 ## Usage
 
-First time:
+Everything goes through the Katalyst menu:
 
 ```bash
-npm run setup     # build, start, and install WordPress
+npm run katalyst
 ```
 
-`npm run setup` brings the stack up, installs WordPress, and installs/activates the plugins listed in [`sandbox.config.json`](#plugins-sandboxconfigjson). It's idempotent — safe to re-run.
+It starts the site if it's stopped, shows your links and login, and offers: **Open WP Admin** (one-click, already logged in), **Open the site**, launching an installed AI agent, a **sandbox shell**, and **Exit** — which stops the site so nothing keeps idling in the background. Only one menu runs per site (a second `npm run katalyst` tells you where the first one lives, via `.katalyst.lock`).
 
-Then open **http://localhost:__WP_PORT__**. WordPress is already installed — log in at **/wp-admin** with the admin account from `.env`:
+The site itself is at **http://localhost:__WP_PORT__**; wp-admin credentials live in `.env`:
 
-- **Username:** `WP_ADMIN_USER` in `.env` (default `admin`)
-- **Password:** `WP_ADMIN_PASSWORD` in `.env` (generated per site at scaffold time)
+- **Username:** `WP_ADMIN_USER` (default `admin`)
+- **Password:** `WP_ADMIN_PASSWORD` (generated per site at scaffold time)
 
-Change `WP_ADMIN_USER` / `WP_ADMIN_PASSWORD` in `.env` before `npm run setup` to use your own.
-
-Day to day, just bring the containers up:
-
-```bash
-npm run start     # build + start containers
-```
+WordPress and the plugins in [`sandbox.config.json`](#plugins-sandboxconfigjson) were installed when this project was created. The provisioning is idempotent — if you edit `sandbox.config.json`, re-run `npm run setup` to apply it (already-done steps are skipped; it does **not** reinstall WordPress).
 
 | Script | What it does |
 | --- | --- |
-| `npm run setup` | First-run: start the stack, install WordPress (admin account from `.env`, user `admin` with a generated password, both in `.env`), install plugins |
-| `npm run start` | `docker compose up -d --build` |
+| `npm run setup` | Re-run provisioning (idempotent): start the stack, apply `sandbox.config.json`, install missing plugins |
+| `npm run start` | Bring the containers up without the menu (`docker compose up -d --build`) |
 | `npm run stop` | Stop containers (keep data) |
 | `npm run down` | Stop + remove containers (data preserved in `db/`, `workspace/`) |
 | `npm run restart` | Restart containers |
@@ -64,6 +58,16 @@ npm run start     # build + start containers
 # <<< agent:opencode
 | `npm run wp` | Run WP-CLI, e.g. `npm run wp -- plugin list` |
 | `npm run reset` | ⚠️ Wipe all data and rebuild from scratch |
+
+## Updating Katalyst's files
+
+The menu checks once a day for a newer Katalyst and shows an **Update Katalyst** item when one exists. You can also run it manually from this directory:
+
+```bash
+npx create-katalystwp@latest update
+```
+
+It explains what it will replace, recommends a backup, and asks for confirmation. It refreshes only Katalyst's own tooling (`scripts/`, the menu, Dockerfiles, compose file, this README) — never your WordPress site, database, `.env`, `sandbox.config.json` settings, `php/php.ini`, or `scripts/user-setup.sh` / `scripts/dev.sh`; npm scripts you added are preserved.
 
 ## Plugins (`sandbox.config.json`)
 
