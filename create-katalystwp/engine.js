@@ -586,7 +586,8 @@ async function promptForChoices({ dir, defaultDir, agents, defaultAgents }) {
   };
 
   if (dir == null) {
-    console.log(`\nWelcome to ${pink('Katalyst')} — let's create a WordPress environment.\n`);
+    // "beta" is a product label — drop it at 1.0.
+    console.log(`\nWelcome to Katalyst ${dim(`v${ENGINE_VERSION} beta`)} — let's create a WordPress environment.\n`);
     const name = answer(await ui.question('Site name', { placeholder: defaultDir, defaultValue: defaultDir })) || defaultDir;
     // Where it lives: a tidy ~/katalyst-sites/<name> by default (everything in
     // one findable place), this folder, or any path. Re-ask on a non-empty
@@ -809,7 +810,8 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
   // Interactive users just answered these — only recap when running on
   // defaults/flags, so scripts and CI logs still show what was decided.
   if (!promptRan) {
-    console.log(`\n→ Config: directory ${projectName} · port ${port} · agents: ${agents.length ? agents.map((k) => AGENTS[k].label).join(', ') : 'none'} · extra plugins: ${extraPlugins.length ? extraPlugins.join(', ') : 'none'}`);
+    console.log(`\n${pkg} v${ENGINE_VERSION} (beta)`);
+    console.log(`→ Config: directory ${projectName} · port ${port} · agents: ${agents.length ? agents.map((k) => AGENTS[k].label).join(', ') : 'none'} · extra plugins: ${extraPlugins.length ? extraPlugins.join(', ') : 'none'}`);
     if (undecided) {
       console.log('  (defaults — run in an interactive terminal to be asked, or set the dir argument / --port= --agents= --plugins=)');
     }

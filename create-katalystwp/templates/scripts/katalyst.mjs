@@ -272,7 +272,7 @@ console.log('');
 const latest = await checkUpdate();
 const updateAvailable = newerThan(latest, VERSION);
 
-console.log('Welcome to Katalyst.\n');
+console.log(`Welcome to Katalyst ${dim(`v${VERSION} beta`)}.\n`);
 
 let first = true;
 for (;;) {
