@@ -1,0 +1,30 @@
+{
+  "name": "katalystwp",
+  "version": "0.0.1",
+  "description": "KatalystWP — manage your local WordPress + AI-agent environments. Manager CLI coming soon; create sites today with `npm create katalystwp`.",
+  "type": "module",
+  "bin": {
+    "katalystwp": "index.js"
+  },
+  "files": [
+    "index.js"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "wordpress",
+    "docker",
+    "ai",
+    "agents",
+    "katalyst",
+    "katalystwp"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/soflyy/katalystwp.git",
+    "directory": "katalystwp"
+  },
+  "author": "Soflyy",
+  "license": "GPL-2.0-or-later"
+}
