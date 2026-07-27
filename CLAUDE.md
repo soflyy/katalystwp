@@ -35,7 +35,7 @@ refreshing `scripts/katalyst.mjs` in existing projects becomes its job.
 - Commit messages / PR bodies that mention commands: NEVER inline with
   `-m "…"` — backticks execute under zsh. Write to a file, `git commit -F`.
 - Raw ESC/BEL bytes keep sneaking into edited JS via ANSI strings — normalize
-  to `` / `` escapes (files look "binary" to grep otherwise).
+  to backslash-u001b / backslash-u0007 string escapes (files look "binary" to grep otherwise).
 - The compose project name comes from the top-level `name:` in the generated
   `docker-compose.yml`; the server's allocator collision check and
   health.js container matching know about the `katalyst-` prefix.
