@@ -3,3 +3,6 @@ node_modules/
 .DS_Store
 .idea/
 .vscode/
+
+# never commit a literal ~ directory (mistyped un-expanded paths)
+~/

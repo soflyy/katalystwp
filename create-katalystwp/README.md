@@ -11,14 +11,22 @@ It scaffolds the project **and runs the initial setup** for you — `docker comp
 npm create katalystwp@latest
 ```
 
-Run in a terminal, it asks a few questions (Enter accepts the default; anything you already gave as an argument or flag is never asked):
+Run in a terminal, it asks exactly two questions (Enter accepts the default; anything you already gave as an argument or flag is never asked):
 
 1. **Project directory** — suggested `my-site` (or pass it as the first argument)
-2. **Host port** for the site — the default offered is the first free port from `8080` that no other environment claims (busy ports are rejected with a re-ask)
-3. **AI coding agents** to install in the workspace — arrow keys + space to pick any of Claude Code (preselected), Cursor CLI, Codex CLI, OpenCode; confirm with nothing selected for a plain no-agent workspace. Only what you pick gets installed
-4. **WordPress plugins** to pre-install — wordpress.org slugs or `.zip` URLs, default none
+2. **AI coding agents** to install in the workspace — arrow keys + space to pick any of Claude Code (preselected), Cursor CLI, Codex CLI, OpenCode; confirm with nothing selected for a plain no-agent workspace. Only what you pick gets installed
 
-During setup only the step lines are shown (`→ Installing WordPress…`, `✓ …`); the full output — Docker build and all — is captured to `~/.katalystwp/logs/<name>.setup.log` and its tail is printed automatically if setup fails. `--verbose` streams everything.
+The host port is picked automatically (first free port from `8080` that no other environment claims — override with `--port=`), and plugins to pre-install are flag/preset-only (`--plugins=`).
+
+During setup a single progress line updates in place; the full output — Docker build and all — is captured to `~/.katalystwp/logs/<name>.setup.log` and its tail is printed automatically if setup fails. `--verbose` streams everything.
+
+When the site is ready you get the summary card (URLs, username, generated password) and land on the **Katalyst menu**:
+
+- **Open WP Admin** — one-click, already logged in (a one-time login link minted through the pre-installed Agent Connector)
+- **Open the site** — front end
+- **Open <agent>** — one entry per installed agent; when you quit the agent you're back on the menu
+- **Sandbox shell** — a terminal inside the sandbox (WordPress at `./wp`); `exit` returns to the menu
+- **Exit** — prints the commands for coming back (`npm run katalyst` reopens this menu from the project directory any time)
 
 Non-interactively (CI, scripts, or `--yes`) it takes those defaults and prints them. Flags answer a question in advance — flagged choices are never asked:
 
@@ -68,6 +76,16 @@ Environments (~/.katalystwp/environments.json):
 ```
 
 The registry is also what lets a new scaffold auto-pick a port that a *stopped* environment owns without conflict. Entries whose directory has been deleted are pruned automatically; setup logs live next to it in `~/.katalystwp/logs/`.
+
+## Updating a site's Katalyst files
+
+Generated projects are self-contained and frozen at scaffold time. The menu checks npm for a newer version at most once a day (fail-silent offline) and shows an **Update Katalyst** item when one exists; picking it runs the pinned-version updater and reopens the menu. Manually, from a site directory:
+
+```bash
+npx create-katalystwp@latest update
+```
+
+Update refreshes only Katalyst-owned tooling files (`scripts/`, Dockerfiles, compose file, README, skills, the menu). Before doing anything it explains exactly what will be replaced, recommends a backup (a git commit or a copy of the folder), and asks for confirmation — `--yes` skips the question for automation. It never touches your WordPress site, database, wp-content, `.env`, `sandbox.config.json` settings (only the recorded `scaffolderVersion` is stamped), `php/php.ini`, or `scripts/user-setup.sh` / `scripts/dev.sh` — and npm scripts you added to `package.json` are preserved. If you hand-edited a Katalyst-owned file (say, `docker-compose.yml`), those edits are what the backup is for. Container-level changes apply on the next `npm run setup` (idempotent — it does **not** reinstall WordPress; already-provisioned steps are skipped).
 
 Docker must be running. When it finishes you have a live site at **http://localhost:8080** — log in at `/wp-admin` with the credentials shown at the end (username `admin`, a per-site generated password — both saved in `.env` as `WP_ADMIN_USER` / `WP_ADMIN_PASSWORD`). At the end, press Enter to open wp-admin already logged in (a one-time login link minted through the pre-installed Agent Connector). Then:
 

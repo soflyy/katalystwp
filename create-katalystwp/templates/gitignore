@@ -6,3 +6,4 @@ workspace/
 # Logs and OS cruft
 *.log
 .DS_Store
+.katalyst.lock

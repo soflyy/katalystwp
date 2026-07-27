@@ -88,11 +88,13 @@ export async function systemHealth(config, registry) {
   const memory = parseMeminfo(meminfoText);
   const cpu = { cores: os.cpus().length, loadavg: os.loadavg() };
 
-  // Per-env container memory: a container belongs to env <name> when its name is
-  // "<name>" or "<name>-<service>-N" (compose default project = the env name).
+  // Per-env container memory: a container belongs to env <name> when its name
+  // is "<name>-<service>-N" or "katalyst-<name>-<service>-N" (the generated
+  // compose file prefixes projects with katalyst-; pre-prefix envs match the
+  // bare form).
   const perEnv = envs
     .map((e) => {
-      const cs = stats.filter((s) => s.name === e.name || s.name.startsWith(`${e.name}-`));
+      const cs = stats.filter((s) => s.name === e.name || s.name.startsWith(`${e.name}-`) || s.name.startsWith(`katalyst-${e.name}-`));
       return { name: e.name, status: e.status, containers: cs.length, memBytes: cs.reduce((a, c) => a + c.memBytes, 0) };
     })
     .sort((a, b) => b.memBytes - a.memBytes);

@@ -5,6 +5,7 @@
   "description": "Local WordPress + AI-agent dev sandbox (Docker).",
   "scripts": {
     "setup": "bash scripts/initial-setup.sh",
+    "katalyst": "node scripts/katalyst.mjs",
     "start": "docker compose up -d --build",
     "stop": "docker compose stop",
     "down": "docker compose down",
@@ -13,7 +14,7 @@
     "dev:logs": "docker compose logs -f dev",
     "ps": "docker compose ps",
     "bash": "bash scripts/in-workspace.sh bash",
-    "claude": "bash scripts/in-workspace.sh claude --dangerously-skip-permissions",
+    "claude": "bash scripts/in-workspace.sh claude",
     "cursor": "bash scripts/in-workspace.sh cursor-agent --force --approve-mcps",
     "codex": "bash scripts/in-workspace.sh codex",
     "opencode": "bash scripts/in-workspace.sh opencode",

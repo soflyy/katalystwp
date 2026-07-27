@@ -12,6 +12,7 @@ import { dirname, join, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline/promises';
 import { randomBytes } from 'node:crypto';
 import { createServer, connect } from 'node:net';
 import { stat } from 'node:fs/promises';
@@ -19,6 +20,10 @@ import { createWriteStream } from 'node:fs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TEMPLATES = join(HERE, 'templates');
+// This package's version — recorded into scaffolds (sandbox.config.json and
+// the __KATALYST_VERSION__ placeholder in templates) so the shipped menu can
+// offer updates.
+const ENGINE_VERSION = JSON.parse(await readFile(join(HERE, 'package.json'), 'utf8')).version;
 
 // Template filename -> output filename (dotfiles can't ship as dotfiles in npm).
 const RENAME = {
@@ -57,15 +62,40 @@ const DEFAULT_AGENTS = ['claude'];
 // color elsewhere. All styling is disabled when piped or NO_COLOR is set.
 const COLOR_ON = process.stdout.isTTY && !process.env.NO_COLOR;
 const PINK_ON = (process.env.COLORTERM || '').includes('truecolor')
-  ? '[38;2;255;45;120m'
-  : '[38;5;198m';
-export const pink = (s) => (COLOR_ON ? `${PINK_ON}${s}[39m` : s);
-export const dim = (s) => (COLOR_ON ? `[2m${s}[22m` : s);
+  ? '\u001b[38;2;255;45;120m'
+  : '\u001b[38;5;198m';
+export const pink = (s) => (COLOR_ON ? `${PINK_ON}${s}\u001b[39m` : s);
+export const dim = (s) => (COLOR_ON ? `\u001b[2m${s}\u001b[22m` : s);
 
 // OSC 8 terminal hyperlink (clickable in iTerm2, Windows Terminal, VS Code,
 // and most modern emulators; unsupported terminals just show the plain URL,
 // and piped output gets the URL untouched). Brand-pink when colors are on.
-const termLink = (url) => (process.stdout.isTTY ? pink(`]8;;${url}${url}]8;;`) : url);
+const termLink = (url) => (process.stdout.isTTY ? pink(`\u001b]8;;${url}${url}\u001b]8;;`) : url);
+
+// Suggested site names: memorable, unique-ish, zero decisions required —
+// "pragmatic-monkey-23". Only a suggestion; the user can type anything.
+const NAME_ADJECTIVES = [
+  'pragmatic', 'angry', 'sleepy', 'brave', 'clever', 'dapper', 'eager', 'fuzzy',
+  'gentle', 'happy', 'jolly', 'keen', 'lively', 'mellow', 'nimble', 'plucky',
+  'quirky', 'rusty', 'snappy', 'tidy', 'witty', 'zesty', 'bold', 'cosmic',
+  'daring', 'electric', 'fancy', 'groovy', 'humble', 'iconic',
+];
+const NAME_ANIMALS = [
+  'monkey', 'gerbil', 'otter', 'badger', 'ferret', 'walrus', 'pelican', 'lemur',
+  'gecko', 'heron', 'ibex', 'jackal', 'koala', 'lynx', 'marmot', 'narwhal',
+  'ocelot', 'panda', 'quokka', 'raccoon', 'stoat', 'toucan', 'urchin', 'vole',
+  'wombat', 'yak', 'zebra', 'beaver', 'condor', 'dingo',
+];
+export function generateSiteName() {
+  const pick = (arr) => arr[randomBytes(1)[0] % arr.length];
+  return `${pick(NAME_ADJECTIVES)}-${pick(NAME_ANIMALS)}-${10 + (randomBytes(1)[0] % 90)}`;
+}
+
+// Shells don't expand ~ inside interactive answers (and not in every arg
+// position either) — do it ourselves so "~/Dev/my-site" never becomes a
+// literal "~" directory.
+const expandTilde = (p) =>
+  (p === '~' ? homedir() : p && (p.startsWith('~/') || p.startsWith('~\\')) ? join(homedir(), p.slice(2)) : p);
 
 // Parse an agents list ("claude,cursor", "all", "none"). Used by --agents and
 // by preset.agents. Throws on unknown names so typos fail loudly.
@@ -219,6 +249,102 @@ function openBrowser(url) {
   } catch { /* best-effort */ }
 }
 
+// `npx create-<brand>@latest update` — refresh the Katalyst-owned files of the
+// project in the current directory to THIS package's versions (what the
+// menu's "Update Katalyst" item runs). NEVER touched: .env,
+// sandbox.config.json contents (only scaffolderVersion is stamped),
+// scripts/user-setup.sh, scripts/dev.sh, and the db/ and workspace/ data.
+// npm scripts the user added to package.json are preserved.
+async function updateProject({ yes = false } = {}) {
+  const targetDir = process.cwd();
+  let envText;
+  try {
+    envText = await readFile(join(targetDir, '.env'), 'utf8');
+  } catch {
+    console.error('✖ No .env here — run update from a Katalyst site directory.');
+    process.exit(1);
+  }
+  const env = {};
+  for (const line of envText.split('\n')) {
+    const m = line.match(/^([A-Z_]+)=(.*)$/);
+    if (m) env[m[1]] = m[2];
+  }
+  let cfg = {};
+  try { cfg = JSON.parse(await readFile(join(targetDir, 'sandbox.config.json'), 'utf8')); } catch { /* tolerated */ }
+
+  const projectName = basename(targetDir);
+  // Projects from before agent selection (<= 0.7.x) had every agent installed.
+  const agents = Array.isArray(cfg.agents) ? cfg.agents.filter((k) => AGENTS[k]) : Object.keys(AGENTS);
+  const appPorts = parseAppPorts((cfg.appPorts ?? []).map((p) => `${p.host}:${p.container}`).join(','));
+  console.log(`→ Updating ${projectName}: ${cfg.scaffolderVersion ?? 'pre-0.8'} → ${ENGINE_VERSION}\n`);
+  console.log('This refreshes Katalyst\'s own tooling files in this project:');
+  console.log('  scripts/ (except your user-setup.sh / dev.sh), bin/, skills/, the');
+  console.log('  Dockerfiles, docker-compose.yml, README.md, and the npm scripts in');
+  console.log('  package.json (scripts you added yourself are kept).');
+  console.log('It does NOT touch your WordPress site, database, wp-content, uploads,');
+  console.log('  .env, sandbox.config.json settings, or php/php.ini.');
+  console.log(`${pink('If you hand-edited any of the refreshed files, those edits will be')}`);
+  console.log(`${pink('overwritten.')} Take a backup first — a git commit, or a copy of the folder.\n`);
+  if (!yes) {
+    if (!process.stdin.isTTY) {
+      console.error('✖ Not updating: confirm with --yes when running non-interactively.');
+      process.exit(1);
+    }
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const a = (await rl.question('? I understand — update now [y/N]: ').catch(() => '')).trim().toLowerCase();
+    rl.close();
+    if (a !== 'y' && a !== 'yes') {
+      console.log('Aborted — nothing was changed.');
+      process.exit(0);
+    }
+  }
+
+  await copyTemplates(TEMPLATES, targetDir, {
+    projectName,
+    agents,
+    agentNpmPkgs: agents.map((k) => AGENTS[k].pkg).filter(Boolean).map((p) => p + ' ').join(''),
+    port: env.WP_PORT || '8080',
+    publicHost: env.PUBLIC_HOST || 'localhost',
+    appPortsBlock: renderAppPortsBlock(appPorts),
+    wpAdminUser: env.WP_ADMIN_USER || 'admin',
+    wpAdminPassword: env.WP_ADMIN_PASSWORD || 'password',
+    wpAdminEmail: env.WP_ADMIN_EMAIL || 'admin@example.com',
+  }, new Set(['env.example', 'sandbox.config.json', 'package.json', 'php']));
+
+  // The dev-service override is emitted on demand — refresh it only where the
+  // project actually uses a dev script.
+  if (cfg.devScript) {
+    await writeFile(join(targetDir, 'docker-compose.override.yml'), await readFile(join(TEMPLATES, 'docker-compose.override.yml'), 'utf8'));
+  }
+
+  // package.json: current template scripts (pruned to this project's agents),
+  // with any user-added scripts carried over.
+  const tplAll = JSON.parse((await readFile(join(TEMPLATES, 'package.json'), 'utf8')).replaceAll('__PROJECT_NAME__', projectName));
+  const rendered = { ...tplAll, scripts: { ...tplAll.scripts } };
+  for (const key of Object.keys(AGENTS)) if (!agents.includes(key)) delete rendered.scripts[key];
+  const existingPkg = await readFile(join(targetDir, 'package.json'), 'utf8').then(JSON.parse).catch(() => ({}));
+  const known = new Set(Object.keys(tplAll.scripts));
+  for (const [k, v] of Object.entries(existingPkg.scripts ?? {})) {
+    if (!known.has(k)) rendered.scripts[k] = v;
+  }
+  if (existingPkg.name) rendered.name = existingPkg.name;
+  await writeFile(join(targetDir, 'package.json'), JSON.stringify(rendered, null, 2) + '\n');
+
+  cfg.agents = agents;
+  cfg.scaffolderVersion = ENGINE_VERSION;
+  await writeFile(join(targetDir, 'sandbox.config.json'), JSON.stringify(cfg, null, 2) + '\n');
+  await recordEnvironment({
+    name: projectName,
+    dir: targetDir,
+    port: parseInt(env.WP_PORT || '8080', 10),
+    agents,
+    updatedAt: new Date().toISOString(),
+  });
+
+  console.log(`✓ Updated to ${ENGINE_VERSION}.`);
+  console.log('  Container-level changes (agents, base images) apply on the next: npm run setup  (safe to re-run)');
+}
+
 // Run `npm run setup` in the project, capturing EVERYTHING to a log file under
 // ~/.katalystwp/logs/. The Docker build firehose never reaches the console:
 // the setup scripts' own step lines (→ / ✓ / …) are passed to `onStep` — in a
@@ -349,6 +475,16 @@ Usage:
 Commands:
   list                  Show every environment recorded in ~/.katalystwp
                         (name, port, up/stopped, agents, directory).
+  menu                  Reopen the Katalyst menu (site links, one-click
+                        wp-admin, agents, sandbox shell) for the project in
+                        the current directory — what \`npm run katalyst\` runs.
+  update                Refresh the Katalyst-owned files of the project in the
+                        current directory to this package's versions. Warns,
+                        recommends a backup, and asks for confirmation first
+                        (--yes skips the question). Never touches .env, your
+                        sandbox.config.json settings, php/php.ini, your
+                        setup/dev scripts, or site data; custom npm scripts
+                        are preserved.
 
 Arguments:
   dir                   Target directory. Asked interactively when omitted
@@ -431,13 +567,13 @@ async function loadUserConfig() {
 // toggles a selection; Enter accepts). Loaded dynamically so non-interactive
 // callers (CI, the devbox server driving index.js from a bare checkout) never
 // need the dependency at all — if it's missing we warn and use the defaults.
-async function promptForChoices({ dir, defaultDir, port, askPort, claimed, agents, plugins, defaultAgents }) {
+async function promptForChoices({ dir, defaultDir, agents, defaultAgents }) {
   let ui;
   try {
     ui = await import('./ui.js');
   } catch {
     console.error('⚠ Interactive prompts need this package\'s dependencies (npm install) — using defaults instead.');
-    return { dir: dir ?? defaultDir, port, agents: agents ?? [...defaultAgents], plugins: plugins ?? [] };
+    return { dir: dir ?? defaultDir, agents: agents ?? [...defaultAgents] };
   }
   // Ctrl+C (or closing stdin) on any question aborts cleanly before anything
   // is written to disk.
@@ -450,31 +586,26 @@ async function promptForChoices({ dir, defaultDir, port, askPort, claimed, agent
   };
 
   if (dir == null) {
-    // Re-ask on a non-empty directory so the user doesn't answer everything
-    // else first and only then hit the "not empty" error.
+    // "beta" is a product label — drop it at 1.0.
+    console.log(`\nWelcome to Katalyst ${dim(`v${ENGINE_VERSION} beta`)} — let's create a WordPress environment.\n`);
+    const name = answer(await ui.question('Site name', { placeholder: defaultDir, defaultValue: defaultDir })) || defaultDir;
+    // Where it lives: a tidy ~/katalyst-sites/<name> by default (everything in
+    // one findable place), this folder, or any path. Re-ask on a non-empty
+    // choice so the user never answers everything and then hits an error.
+    const homeDir = join(homedir(), 'katalyst-sites', name);
     for (;;) {
-      const a = answer(await ui.question('Project directory', { placeholder: defaultDir, defaultValue: defaultDir })) || defaultDir;
-      const existing = await readdir(resolve(a)).catch(() => []);
+      const where = answer(await ui.choose('Where should it live?', [
+        { value: homeDir, label: `~/katalyst-sites/${name}`, hint: 'recommended' },
+        { value: resolve(name), label: `./${name}`, hint: 'inside the current folder' },
+        { value: ' custom', label: 'Somewhere else…', hint: 'type a path' },
+      ]));
+      const candidate = where === ' custom'
+        ? expandTilde(answer(await ui.question('Path for the site', { placeholder: `~/katalyst-sites/${name}` })) || homeDir)
+        : where;
+      const existing = await readdir(resolve(candidate)).catch(() => []);
       const blocking = existing.filter((f) => !ALLOWED_EXISTING.has(f));
-      if (!blocking.length) { dir = a; break; }
-      console.log(`  ${pink('✖')} ${resolve(a)} is not empty — pick a new or empty directory.`);
-    }
-  }
-  if (askPort) {
-    for (;;) {
-      const a = answer(await ui.question('Host port for the WordPress site', {
-        placeholder: String(port),
-        defaultValue: String(port),
-        validate: (v) => (v && v.trim() && !/^\d{1,5}$/.test(v.trim()) ? 'Enter a port number (1-65535).' : undefined),
-      })) || String(port);
-      const n = parseInt(a, 10);
-      if (!(n >= 1 && n <= 65535)) { console.log(`  ${pink('✖')} Enter a port number (1-65535).`); continue; }
-      if (claimed.has(n) || !(await portFree(n))) {
-        console.log(`  ${pink('✖')} Port ${n} is busy (another environment or process) — pick a different one.`);
-        continue;
-      }
-      port = String(n);
-      break;
+      if (!blocking.length) { dir = candidate; break; }
+      console.log(`  ${pink('✖')} ${resolve(candidate)} is not empty — pick a new or empty location.`);
     }
   }
   if (agents == null) {
@@ -484,21 +615,18 @@ async function promptForChoices({ dir, defaultDir, port, askPort, claimed, agent
       { initialValues: [...defaultAgents] },
     ));
   }
-  if (plugins == null) {
-    const a = answer(await ui.question('WordPress plugins to pre-install (slugs or .zip URLs, comma-separated)', { placeholder: 'none' }));
-    plugins = a ? a.split(',').map((s) => s.trim()).filter(Boolean) : [];
-  }
-  return { dir, port, agents, plugins };
+  return { dir, agents };
 }
 
-async function copyTemplates(srcDir, destDir, vars) {
+
+async function copyTemplates(srcDir, destDir, vars, skip = new Set()) {
   for (const entry of await readdir(srcDir, { withFileTypes: true })) {
-    if (SKIP_TEMPLATES.has(entry.name)) continue;
+    if (SKIP_TEMPLATES.has(entry.name) || skip.has(entry.name)) continue;
     const src = join(srcDir, entry.name);
     const dest = join(destDir, RENAME[entry.name] ?? entry.name);
     if (entry.isDirectory()) {
       await mkdir(dest, { recursive: true });
-      await copyTemplates(src, dest, vars);
+      await copyTemplates(src, dest, vars, skip);
     } else {
       const rendered = applyAgentSections(await readFile(src, 'utf8'), vars.agents)
         .replaceAll('__PROJECT_NAME__', vars.projectName)
@@ -506,6 +634,7 @@ async function copyTemplates(srcDir, destDir, vars) {
         .replaceAll('__PUBLIC_HOST__', vars.publicHost)
         .replaceAll('__APP_PORTS__', vars.appPortsBlock)
         .replaceAll('__AGENT_NPM_PKGS__', vars.agentNpmPkgs)
+        .replaceAll('__KATALYST_VERSION__', ENGINE_VERSION)
         .replaceAll('__WP_ADMIN_USER__', vars.wpAdminUser)
         .replaceAll('__WP_ADMIN_PASSWORD__', vars.wpAdminPassword)
         .replaceAll('__WP_ADMIN_EMAIL__', vars.wpAdminEmail);
@@ -525,8 +654,10 @@ async function applyConfig(targetDir, extra) {
   const cfgPath = join(targetDir, 'sandbox.config.json');
   const cfg = JSON.parse(await readFile(cfgPath, 'utf8'));
   // Which agents this sandbox was scaffolded with — informational (the actual
-  // installs are baked into workspace.Dockerfile at scaffold time).
+  // installs are baked into workspace.Dockerfile at scaffold time) — and the
+  // scaffolder version, so `update` can report what it upgraded from.
   cfg.agents = extra.agents ?? [];
+  cfg.scaffolderVersion = ENGINE_VERSION;
   if (extra.plugins?.length) cfg.plugins = [...(cfg.plugins ?? []), ...extra.plugins];
   if (extra.activate?.length) cfg.activate = [...(cfg.activate ?? []), ...extra.activate];
   if (extra.defines && Object.keys(extra.defines).length) {
@@ -589,6 +720,21 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
     await listEnvironments();
     return;
   }
+  if (args.dir === 'update') {
+    await updateProject({ yes: args.yes });
+    return;
+  }
+  if (args.dir === 'menu') {
+    // The menu ships WITH each project (scripts/katalyst.mjs — offline, no
+    // version drift); this subcommand just delegates for convenience. The
+    // script prints its own error when run outside a Katalyst project.
+    const code = await new Promise((res) => {
+      const child = spawn(process.execPath, ['scripts/katalyst.mjs'], { stdio: 'inherit' });
+      child.on('close', res);
+      child.on('error', () => res(1));
+    });
+    process.exit(typeof code === 'number' ? code : 1);
+  }
 
   // Read & validate the file-backed inputs first, so a bad --setup-script /
   // --dev-script / --defines path fails before we create or write anything.
@@ -637,25 +783,35 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
     port = String(await findFreePort(parseInt(args.port, 10) || 8080, claimed));
   }
 
-  const undecided = args.dir == null || agents == null || extraPlugins == null || !args.portExplicit;
+  // Only two questions: directory and agents. Port is auto-picked (visible in
+  // the summary card, overridable with --port); plugins are flags/preset-only.
+  const undecided = args.dir == null || agents == null;
   const canPrompt = !args.yes && process.stdin.isTTY && process.stdout.isTTY;
   const promptRan = undecided && canPrompt;
   if (promptRan) {
-    ({ dir: args.dir, port, agents, plugins: extraPlugins } = await promptForChoices({
-      dir: args.dir, defaultDir: 'my-site', port, askPort: !args.portExplicit, claimed, agents, plugins: extraPlugins, defaultAgents,
+    // Suggest a fun unique name whose default location doesn't already exist.
+    let suggested = generateSiteName();
+    for (let i = 0; i < 5; i++) {
+      const exists = await stat(join(homedir(), 'katalyst-sites', suggested)).then(() => true).catch(() => false);
+      if (!exists) break;
+      suggested = generateSiteName();
+    }
+    ({ dir: args.dir, agents } = await promptForChoices({
+      dir: args.dir, defaultDir: suggested, agents, defaultAgents,
     }));
   }
   agents ??= defaultAgents;
   extraPlugins ??= [];
   args.port = port;
 
-  const targetDir = resolve(args.dir ?? '.');
+  const targetDir = resolve(expandTilde(args.dir) ?? '.');
   const projectName = basename(targetDir);
 
   // Interactive users just answered these — only recap when running on
   // defaults/flags, so scripts and CI logs still show what was decided.
   if (!promptRan) {
-    console.log(`\n→ Config: directory ${projectName} · port ${port} · agents: ${agents.length ? agents.map((k) => AGENTS[k].label).join(', ') : 'none'} · extra plugins: ${extraPlugins.length ? extraPlugins.join(', ') : 'none'}`);
+    console.log(`\n${pkg} v${ENGINE_VERSION} (beta)`);
+    console.log(`→ Config: directory ${projectName} · port ${port} · agents: ${agents.length ? agents.map((k) => AGENTS[k].label).join(', ') : 'none'} · extra plugins: ${extraPlugins.length ? extraPlugins.join(', ') : 'none'}`);
     if (undecided) {
       console.log('  (defaults — run in an interactive terminal to be asked, or set the dir argument / --port= --agents= --plugins=)');
     }
@@ -821,50 +977,35 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
     process.exit(1);
   }
 
-  // Compact summary: what you need to use the site, then the two or three
-  // commands you'll actually run next. Everything else is in the project README.
-  console.log(`\n${dim('─'.repeat(48))}\n`);
-  console.log(`  ${dim('WordPress')}  ${termLink(`http://${args.publicHost}:${args.port}`)}`);
-  console.log(`  ${dim('Admin')}      ${termLink(`http://${args.publicHost}:${args.port}/wp-admin`)}`);
-  console.log(`  ${dim('Username')}   ${adminUser}`);
-  console.log(`  ${dim('Password')}   ${adminPass}`);
-  for (const p of appPorts) {
-    console.log(`  ${dim('App')}        ${termLink(`http://${args.publicHost}:${p.host}`)} → workspace:${p.container}`);
-  }
-  console.log('');
-  console.log(`  cd ${cd}`);
-  printCmds([
-    ...agentCmds,
-    ['npm run bash', 'shell · stop|start the stack: npm run stop|start'],
-    ...(devScriptRel ? [['npm run dev:logs', 'follow the dev script']] : []),
-    [`npx ${pkg} list`, 'all your environments'],
-  ]);
-  console.log('');
+  console.log(`\n${dim('─'.repeat(48))}`);
 
-  // One keypress from a logged-in dashboard: mint a one-time passwordless
-  // login link (Agent Connector ability) and open it in the browser. TTY only.
-  // KATALYSTWP_NO_OPEN=1 prints the link instead of opening a browser (SSH
-  // sessions, tests).
+  // Interactive terminals land on the Katalyst hub — the project's OWN
+  // scripts/katalyst.mjs (it prints the summary card, then the menu; its Exit
+  // stops the site). Everything else gets the card + printed commands.
   if (process.stdin.isTTY && process.stdout.isTTY) {
-    process.stdout.write(`  Press ${pink('Enter')} to open wp-admin (one-click login), Ctrl+C to skip… `);
-    await new Promise((r) => { process.stdin.resume(); process.stdin.once('data', r); });
-    const minted = await mintAdminLoginUrl(targetDir);
-    let target = minted ?? `http://${args.publicHost}:${args.port}/wp-admin`;
-    if (minted) {
-      // Rebase onto the browser-facing host/port (redemption is host-agnostic).
-      try {
-        const u = new URL(minted);
-        u.hostname = args.publicHost;
-        u.port = String(args.port);
-        target = u.toString();
-      } catch { /* use as minted */ }
+    await new Promise((res) => {
+      const child = spawn(process.execPath, ['scripts/katalyst.mjs'], { cwd: targetDir, stdio: 'inherit' });
+      child.on('close', res);
+      child.on('error', res);
+    });
+  } else {
+    console.log('');
+    console.log(`  ${dim('WordPress')}  ${termLink(`http://${args.publicHost}:${args.port}`)}`);
+    console.log(`  ${dim('Admin')}      ${termLink(`http://${args.publicHost}:${args.port}/wp-admin`)}`);
+    console.log(`  ${dim('Username')}   ${adminUser}`);
+    console.log(`  ${dim('Password')}   ${adminPass}`);
+    for (const p of appPorts) {
+      console.log(`  ${dim('App')}        ${termLink(`http://${args.publicHost}:${p.host}`)} → workspace:${p.container}`);
     }
-    if (process.env.KATALYSTWP_NO_OPEN) {
-      console.log(`\n  ${dim('One-click login:')} ${target}\n`);
-    } else {
-      openBrowser(target);
-      console.log(`\n  ${dim(minted ? 'Opening wp-admin (logged in)…' : 'Opening wp-admin (log in with the credentials above)…')}\n`);
-    }
-    process.stdin.pause();
+    console.log('');
+    console.log(`  cd ${cd}`);
+    printCmds([
+      ['npm run katalyst', 'the Katalyst menu — site links, agents, shell'],
+      ...agentCmds,
+      ['npm run bash', 'sandbox shell · stop|start the stack: npm run stop|start'],
+      ...(devScriptRel ? [['npm run dev:logs', 'follow the dev script']] : []),
+      [`npx ${pkg} list`, 'all your environments'],
+    ]);
+    console.log('');
   }
 }

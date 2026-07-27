@@ -96,13 +96,13 @@ export async function allocate(registry, config, { nameHint, pool = null, appPor
           400,
         );
       }
-      if (usedNames.has(name) || existingProjects.has(name)) {
+      if (usedNames.has(name) || existingProjects.has(name) || existingProjects.has(`katalyst-${name}`)) {
         throw new AllocationError(`name "${name}" is already in use`, 409);
       }
     } else {
       do {
         name = randomName();
-      } while (usedNames.has(name) || existingProjects.has(name));
+      } while (usedNames.has(name) || existingProjects.has(name) || existingProjects.has(`katalyst-${name}`));
     }
 
     // Resolve unique, currently-free host ports in the configured range: the
@@ -131,10 +131,11 @@ export async function allocate(registry, config, { nameHint, pool = null, appPor
     const record = {
       id,
       name,
-      // Compose project name = the dir basename (the default), so the server's
-      // `docker compose` calls, the project's own `npm run …` scripts, and
-      // `scripts/in-workspace.sh` all target the same project.
-      project: name,
+      // Compose project name — set by the generated docker-compose.yml's
+      // top-level `name: katalyst-<basename>`, so the server's `docker compose`
+      // calls (run in the env dir), the project's own `npm run …` scripts, and
+      // `scripts/in-workspace.sh` all target the same prefixed project.
+      project: `katalyst-${name}`,
       dir,
       port,
       // Host-published dev-server ports ({ host, container }), allocated from

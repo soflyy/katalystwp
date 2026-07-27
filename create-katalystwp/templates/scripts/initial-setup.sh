@@ -12,7 +12,16 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "→ Building and starting containers…"
-docker compose up -d --build
+# Always check for newer base images (wordpress:latest, node, …) — a couple of
+# seconds when everything is current; docker only downloads when the registry
+# digest actually changed. Offline / registry hiccup falls back to the local
+# cache so setup still works.
+if ! docker compose build --pull; then
+  echo "→ Registry unreachable — building from the local image cache."
+  docker compose build
+fi
+docker compose pull db playwright >/dev/null 2>&1 || true
+docker compose up -d
 
 echo "→ Waiting for WordPress files and the database…"
 tries=0

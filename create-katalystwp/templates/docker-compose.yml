@@ -1,3 +1,7 @@
+# Compose project name — prefixed so Katalyst sites are recognizable in
+# `docker ps` / Docker Desktop (containers become katalyst-<site>-<service>-N).
+name: katalyst-__PROJECT_NAME__
+
 services:
   db:
     image: mariadb:latest
