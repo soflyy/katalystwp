@@ -110,6 +110,7 @@ function choose(message, options) {
         ? [`${pink('?')} ${dim(message)}`, `${dim('>')} ${options[cursor].label}`]
         : [
           `${pink('?')} ${message}`,
+          '',
           ...options.map((o, i) => (i === cursor
             ? `${pink('>')} ${pink(o.label)}${o.hint ? `  ${dim(o.hint)}` : ''}`
             : `  ${o.label}${o.hint ? `  ${dim(o.hint)}` : ''}`)),
@@ -216,10 +217,12 @@ console.log('');
 const latest = await checkUpdate();
 const updateAvailable = newerThan(latest, VERSION);
 
+console.log('Welcome to Katalyst.\n');
+
 let first = true;
 for (;;) {
   const choice = await choose(
-    first ? `Welcome to ${pink('Katalyst')}. What do you want to do?` : 'What next?',
+    first ? 'What do you want to do?' : 'What next?',
     [
       { value: 'admin', label: 'Open WP Admin', hint: 'logged in, one-click' },
       { value: 'site', label: 'Open the site', hint: 'front end' },
