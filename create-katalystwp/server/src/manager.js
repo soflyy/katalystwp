@@ -213,6 +213,10 @@ export class Manager {
       await registry.update(record.id, { status: 'failed', lastError: truncate(redactErr(err)) });
     } finally {
       this.jobs.delete(record.id);
+      // Drop any probe cache so describe() reflects the freshly persisted status
+      // right away (consistent with start()/_claimPipeline); avoids a stale ps
+      // briefly overriding the real state on the read path.
+      this.probeCache.delete(record.id);
     }
   }
 
@@ -459,6 +463,12 @@ export class Manager {
       await registry.update(record.id, { status: 'failed', lastError: truncate(redactErr(err)) });
     } finally {
       this.jobs.delete(record.id);
+      // A claimed warm member carries a stale probe cache (it showed the env
+      // stopped while it waited in the pool). Drop it — like start() does — so
+      // describe() serves the fresh persisted status ('running') immediately
+      // instead of computing 'stopped' from the stale ps until the next sweep
+      // (which made the new env flicker into the Stopped tab and back).
+      this.probeCache.delete(record.id);
     }
   }
 
