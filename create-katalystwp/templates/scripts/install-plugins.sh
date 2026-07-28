@@ -79,7 +79,12 @@ if [ -n "$activate_rows" ]; then
     [ -n "$slug" ] || continue
     echo "→ Activate: $slug"
     # </dev/null so `docker compose exec` doesn't swallow the loop's remaining rows.
-    docker compose exec -T workspace wp plugin activate "$slug" </dev/null
+    # Non-fatal: a single stale/missing slug (e.g. an upstream plugin renamed or
+    # merged away) must NOT abort the whole setup and take down the steps that
+    # run after this one (agent connector, etc.). Warn and keep going.
+    if ! docker compose exec -T workspace wp plugin activate "$slug" </dev/null; then
+      echo "  ⚠ Could not activate '$slug' — skipping (plugin missing or errored). Continuing."
+    fi
   done
 fi
 

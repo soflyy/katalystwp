@@ -148,7 +148,11 @@ const SEED_PRESETS = [
     description: 'Oxygen builder, built from soflyy/breakdance (BREAKDANCE_MODE=oxygen).',
     setupScript: BREAKDANCE_SETUP_SCRIPT,
     defines: { BREAKDANCE_MODE: 'oxygen', ...BREAKDANCE_BASE_DEFINES },
-    activate: ['oxygen-elements', 'breakdance-elements', 'breakdance-main'],
+    // breakdance PR #9585 merged the standalone breakdance-elements and
+    // breakdance-woocommerce plugins INTO breakdance-main (plugin/elements/,
+    // plugin/woocommerce/); they no longer exist as separate slugs. Activating
+    // breakdance-main now carries their functionality.
+    activate: ['oxygen-elements', 'breakdance-main'],
     devScript: BREAKDANCE_DEV_SCRIPT,
   },
   {
@@ -156,8 +160,8 @@ const SEED_PRESETS = [
     description: 'Breakdance builder, built from soflyy/breakdance (BREAKDANCE_MODE=breakdance).',
     setupScript: BREAKDANCE_SETUP_SCRIPT,
     defines: { BREAKDANCE_MODE: 'breakdance', ...BREAKDANCE_BASE_DEFINES },
-    // Order matters: elements → main → woocommerce.
-    activate: ['breakdance-elements', 'breakdance-main', 'breakdance-woocommerce'],
+    // elements + woocommerce were folded into breakdance-main (breakdance #9585).
+    activate: ['breakdance-main'],
     devScript: BREAKDANCE_DEV_SCRIPT,
   },
   {
@@ -165,8 +169,9 @@ const SEED_PRESETS = [
     description: 'Breakdance + the FutureLayer plugin and app-dot-futurelayer (Next.js, published on an app port), built from soflyy/breakdance.',
     setupScript: FUTURELAYER_SETUP_SCRIPT,
     defines: { BREAKDANCE_MODE: 'breakdance', ...BREAKDANCE_BASE_DEFINES },
-    // Breakdance order, then breakdance-ai, then futurelayer-plugin.
-    activate: ['breakdance-elements', 'breakdance-main', 'breakdance-woocommerce', 'breakdance-ai', 'futurelayer-plugin'],
+    // breakdance-main (now includes elements + woocommerce, breakdance #9585),
+    // then breakdance-ai, then futurelayer-plugin.
+    activate: ['breakdance-main', 'breakdance-ai', 'futurelayer-plugin'],
     devScript: BREAKDANCE_DEV_SCRIPT,
     appPorts: [3000],
   },
