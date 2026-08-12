@@ -106,6 +106,28 @@ curl -N $H localhost:4000/sessions/<id>/stream         # live stream-json
 curl -s $H -XPOST localhost:4000/sessions/<id>/messages -d '{"prompt":"now add a CHANGELOG entry"}'
 ```
 
+## MCP
+
+The same surface is exposed as an **MCP server** at `POST /mcp` (Streamable
+HTTP transport, stateless, hand-rolled — still zero dependencies), so any MCP
+client (Claude Code, Cursor, claude.ai, …) can drive the server with typed
+tools instead of raw curl. From a machine that can reach the server:
+
+```bash
+claude mcp add --transport http katalyst http://<host>:4000/mcp \
+  --header "Authorization: Bearer $DEVBOX_API_TOKEN"
+```
+
+Same bearer auth as the JSON API. ~30 tools mirroring everything above —
+environments (create / wait / logs / start / stop / destroy / admin-login),
+presets, warm pool, host health, and full agent-session driving
+(`start_session` → `wait_for_turn` → `send_message`), plus `get_instructions`,
+which returns a complete usage guide. The tool list, that guide, and the MCP
+`initialize.instructions` field are all generated from the single tool table in
+`src/mcp.js`, so docs can't drift from the callable surface. Both endpoints
+share one ops layer (`src/ops.js`); deliberately **not** exposed over MCP:
+settings writes (credential rotation) and `/control/shutdown`.
+
 ## Web UI
 
 Open `http://<host>:<port>/` and enter the `DEVBOX_API_TOKEN`. List sessions across all devboxes, watch a session stream live (token-by-token, with tool calls), send messages, interrupt, start a new session (pick a devbox + model), and copy the SSH-resume command. Buildless (Preact + htm from a CDN) — to run fully offline, vendor those into `ui/vendor/`.

@@ -19,6 +19,13 @@ Connector (dev)** (check out `agent-connector-for-wp` for the agent to work on).
 You do **not** need a special client — every action is an HTTP request you can
 make with `curl` (or any HTTP library).
 
+> **Using MCP instead?** The same surface is available as an MCP server at
+> `POST /mcp` (Streamable HTTP, same bearer token):
+> `claude mcp add --transport http katalyst http://<host>:4000/mcp --header "Authorization: Bearer <token>"`.
+> Once connected, call the `get_instructions` tool for the MCP-flavored version
+> of this guide (generated from the live tool table, always in sync). The rest
+> of this document describes the raw HTTP API.
+
 ## Connection
 
 Two values the operator gives you (fill these in):
