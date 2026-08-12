@@ -118,6 +118,8 @@ claude mcp add --transport http katalyst http://<host>:4000/mcp \
   --header "Authorization: Bearer $DEVBOX_API_TOKEN"
 ```
 
+(Use `https://` if the server sits behind TLS — see **HTTPS on a bare IP** below.)
+
 Same bearer auth as the JSON API. ~30 tools mirroring everything above —
 environments (create / wait / logs / start / stop / destroy / admin-login),
 presets, warm pool, host health, and full agent-session driving
@@ -127,6 +129,22 @@ which returns a complete usage guide. The tool list, that guide, and the MCP
 `src/mcp.js`, so docs can't drift from the callable surface. Both endpoints
 share one ops layer (`src/ops.js`); deliberately **not** exposed over MCP:
 settings writes (credential rotation) and `/control/shutdown`.
+
+## HTTPS on a bare IP
+
+Running network-exposed, the bearer token otherwise crosses the wire in
+cleartext. You don't need a domain to fix that: Let's Encrypt issues
+publicly-trusted certificates **for IP addresses** (GA since 2026-01, ~6-day
+lifetime via the `shortlived` ACME profile), and Caddy ≥ 2.10 auto-obtains and
+renews them. Bind the server to loopback (`DEVBOX_BIND=127.0.0.1`,
+`DEVBOX_PORT=4001`) and put Caddy on the public port — see
+[`deploy/Caddyfile.example`](deploy/Caddyfile.example). Ports 80/443 must stay
+reachable for ACME validation. SSE session streams work through the proxy
+unchanged.
+
+This covers the control plane (API/MCP/UI/token). The per-env WordPress sites
+on their own ports remain plain HTTP until they're proxied too (requires
+compose port rebinding + WP siteurl scheme changes — tracked separately).
 
 ## Web UI
 

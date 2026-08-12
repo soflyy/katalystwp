@@ -1,0 +1,35 @@
+# HTTPS for the devbox control plane on a BARE IP — no domain needed.
+#
+# Let's Encrypt issues publicly-trusted certificates for IP addresses (GA since
+# 2026-01) via the "shortlived" ACME profile: ~6-day lifetime, auto-renewed by
+# Caddy (needs Caddy >= 2.10). ACME validation (http-01 / tls-alpn-01) always
+# happens on ports 80/443, so both must be reachable from the internet even
+# though the site itself serves on :4000.
+#
+# Pair this with devbox-server bound to loopback so raw HTTP is unreachable
+# from outside — in the server's env (e.g. /etc/devbox/devbox.env):
+#
+#   DEVBOX_BIND=127.0.0.1
+#   DEVBOX_PORT=4001
+#
+# Then clients keep using the familiar port, now with TLS:
+#
+#   claude mcp add --transport http katalyst https://<your-ip>:4000/mcp \
+#     --header "Authorization: Bearer $DEVBOX_API_TOKEN"
+#
+# Note: this secures the CONTROL PLANE (API token, MCP, session streams, UI).
+# The per-env WordPress sites on their own ports remain plain HTTP until they
+# are proxied too (bigger change: compose port rebinding + WP siteurl scheme).
+
+{
+	email you@example.com
+}
+
+<your-ip>:4000 {
+	tls {
+		issuer acme {
+			profile shortlived
+		}
+	}
+	reverse_proxy 127.0.0.1:4001
+}
