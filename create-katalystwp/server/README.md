@@ -31,7 +31,7 @@ The server is a **thin orchestrator over the scaffolded project's own scripts**:
 | `DEVBOX_BIND` | `127.0.0.1` | bind address. `0.0.0.0` (or a specific IP) to reach it over the network — **requires `DEVBOX_API_TOKEN`** (the server refuses to start network-exposed without one) and a firewall/VPN |
 | `DEVBOX_API_TOKEN` | — | if set, all routes require `Authorization: Bearer <token>` |
 | `WP_PORT_RANGE` | `9000-9999` | host ports to allocate from (the env's WP port **and** its app ports) |
-| `DEVBOX_PUBLIC_HOST` | `localhost` | hostname/IP browsers use to reach this Docker host (your server's public IP / DNS name) — passed to the scaffolder as `--public-host` so setup scripts can build browser-valid URLs |
+| `DEVBOX_PUBLIC_HOST` | `localhost` | hostname/IP browsers use to reach this Docker host (your server's public IP / DNS name) — used in every returned URL (`wpUrl`, admin-login `loginUrl`) and passed to the scaffolder as `--public-host` so setup scripts can build browser-valid URLs |
 | `SANDBOX_SETUP_ENV_*` | — | setup secrets forwarded to every env's setup script with the prefix stripped (see above) |
 | `MAX_ENVIRONMENTS` | `25` | hard cap on environments |
 | `BUILD_CONCURRENCY` | `2` | simultaneous `docker build`/setup runs |
@@ -85,7 +85,7 @@ DEVBOX_API_TOKEN=secret GITHUB_TOKEN=… npm start
 | `POST` | `/sessions/:id/messages` | `{prompt}` → 202; continue the session (`--resume`); 409 if a turn is active |
 | `GET` | `/sessions` / `/sessions/:id` | list / one session (id, claudeSessionId, status, cost, `sshResumeHint`) |
 | `GET` | `/sessions/:id/stream` | **SSE** live stream-json (auth: bearer or `?access_token=`) |
-| `GET` | `/sessions/:id/transcript?tail=N` | full event history (ndjson) |
+| `GET` | `/sessions/:id/transcript?tail=N` | full event history; `&partials=live\|none` drops token deltas, `&clip=N` truncates giant strings (screenshots, file blobs) |
 | `POST` | `/sessions/:id/interrupt` | SIGINT the active turn |
 | `DELETE` | `/sessions/:id` | forget the session |
 | `GET` | `/host` | system health: memory/CPU/disk, docker df, per-env container memory, RAM-headroom estimate |
@@ -105,6 +105,46 @@ curl -s $H -XPOST localhost:4000/environments/my-devbox/sessions -d '{"prompt":"
 curl -N $H localhost:4000/sessions/<id>/stream         # live stream-json
 curl -s $H -XPOST localhost:4000/sessions/<id>/messages -d '{"prompt":"now add a CHANGELOG entry"}'
 ```
+
+## MCP
+
+The same surface is exposed as an **MCP server** at `POST /mcp` (Streamable
+HTTP transport, stateless, hand-rolled — still zero dependencies), so any MCP
+client (Claude Code, Cursor, claude.ai, …) can drive the server with typed
+tools instead of raw curl. From a machine that can reach the server:
+
+```bash
+claude mcp add --transport http katalyst http://<host>:4000/mcp \
+  --header "Authorization: Bearer $DEVBOX_API_TOKEN"
+```
+
+(Use `https://` if the server sits behind TLS — see **HTTPS on a bare IP** below.)
+
+Same bearer auth as the JSON API. ~30 tools mirroring everything above —
+environments (create / wait / logs / start / stop / destroy / admin-login),
+presets, warm pool, host health, and full agent-session driving
+(`start_session` → `wait_for_turn` → `send_message`), plus `get_instructions`,
+which returns a complete usage guide. The tool list, that guide, and the MCP
+`initialize.instructions` field are all generated from the single tool table in
+`src/mcp.js`, so docs can't drift from the callable surface. Both endpoints
+share one ops layer (`src/ops.js`); deliberately **not** exposed over MCP:
+settings writes (credential rotation) and `/control/shutdown`.
+
+## HTTPS on a bare IP
+
+Running network-exposed, the bearer token otherwise crosses the wire in
+cleartext. You don't need a domain to fix that: Let's Encrypt issues
+publicly-trusted certificates **for IP addresses** (GA since 2026-01, ~6-day
+lifetime via the `shortlived` ACME profile), and Caddy ≥ 2.10 auto-obtains and
+renews them. Bind the server to loopback (`DEVBOX_BIND=127.0.0.1`,
+`DEVBOX_PORT=4001`) and put Caddy on the public port — see
+[`deploy/Caddyfile.example`](deploy/Caddyfile.example). Ports 80/443 must stay
+reachable for ACME validation. SSE session streams work through the proxy
+unchanged.
+
+This covers the control plane (API/MCP/UI/token). The per-env WordPress sites
+on their own ports remain plain HTTP until they're proxied too (requires
+compose port rebinding + WP siteurl scheme changes — tracked separately).
 
 ## Web UI
 

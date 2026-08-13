@@ -1,65 +1,23 @@
-// Endpoint handlers — thin: validate input, call the manager/session engine,
-// shape the response. `sessions` bundles { store, engine, bus }.
+// Endpoint handlers — thin: validate input, call the shared ops layer (ops.js,
+// also used by the MCP endpoint) or the manager/session engine directly, shape
+// the response. `sessions` bundles { store, engine, bus }.
 
-import { readFile, rm } from 'node:fs/promises';
 import { route } from './http.js';
 import { addSecrets } from './log.js';
-import { exec } from './docker.js';
 import { systemHealth } from './health.js';
 import { AGENTS } from './claude.js';
 import { AllocationError } from './allocator.js';
 import { composeProvision } from './provision.js';
+import { httpErr, validatePreset } from './ops.js';
 import { openSse } from './sse.js';
 import { makeStaticHandler } from './static.js';
 
-export function buildRoutes(config, registry, manager, sessions, presets, settings) {
+export function buildRoutes(config, registry, manager, sessions, presets, settings, ops) {
   const staticHandler = makeStaticHandler(config.uiRoot);
 
-  const envOr404 = (ctx) => {
-    const rec = registry.get(ctx.params.id) || registry.getByName(ctx.params.id);
-    if (!rec) throw httpErr(404, `environment "${ctx.params.id}" not found`);
-    return rec;
-  };
-  const sessionOr404 = (ctx) => {
-    const s = sessions.store.get(ctx.params.id);
-    if (!s) throw httpErr(404, `session "${ctx.params.id}" not found`);
-    return s;
-  };
-  const assertUsable = async (env) => {
-    if (!(await manager.usable(env))) throw httpErr(409, `environment "${env.name}" is not running`);
-  };
-  // Fully remove a session: stop any active turn, drop its event stream + log
-  // file, and delete the record. Used by DELETE /sessions/:id and env destroy.
-  const deleteSession = async (s) => {
-    sessions.engine.interrupt(s.id);
-    sessions.bus.clear(s.id);
-    await sessions.store.remove(s.id);
-    if (s.eventLogPath) await rm(s.eventLogPath, { force: true }).catch(() => {});
-  };
-  const sshHint = (s) => {
-    const env = registry.get(s.envId);
-    if (!env || !s.claudeSessionId) return null;
-    return (AGENTS[s.agent] || AGENTS.claude).resumeHint(env.dir, s.claudeSessionId);
-  };
-  const publicSession = (s) => ({
-    id: s.id,
-    envId: s.envId,
-    envName: s.envName,
-    agent: s.agent || 'claude',
-    claudeSessionId: s.claudeSessionId,
-    cwd: s.cwd,
-    model: s.model,
-    title: s.title,
-    status: sessions.engine.isActive(s.id) ? 'running' : s.status,
-    turnCount: s.turnCount,
-    lastResult: s.lastResult,
-    costUsd: s.costUsd,
-    lastError: s.lastError,
-    archived: !!s.archived,
-    createdAt: s.createdAt,
-    lastActivityAt: s.lastActivityAt,
-    sshResumeHint: sshHint(s),
-  });
+  const envOr404 = (ctx) => ops.envByRef(ctx.params.id);
+  const sessionOr404 = (ctx) => ops.sessionByRef(ctx.params.id);
+  const { assertUsable, publicSession } = ops;
 
   return [
     route('GET', '/health', async (ctx) => ctx.send(200, { ok: true, version: 1 })),
@@ -95,31 +53,8 @@ export function buildRoutes(config, registry, manager, sessions, presets, settin
     // ---- environments -----------------------------------------------------
     route('POST', '/environments', async (ctx) => {
       try {
-        // Compose any selected presets (in order) with optional custom fields.
-        const presetIds = Array.isArray(ctx.body.presetIds) ? ctx.body.presetIds : [];
-        const selected = presetIds.map((pid) => {
-          const p = presets.get(pid);
-          if (!p) throw httpErr(400, `unknown preset "${pid}"`);
-          return p;
-        });
-        const custom = normalizeProvision(ctx.body.provision);
-        const provision = composeProvision(selected, custom);
-        const prompt = typeof ctx.body.prompt === 'string' ? ctx.body.prompt.trim() : '';
-        const model = typeof ctx.body.model === 'string' && ctx.body.model.trim() ? ctx.body.model.trim() : undefined;
-        const agent = AGENTS[ctx.body.agent] ? ctx.body.agent : undefined; // first-prompt session agent; else default
-
-        // Warm-pool fast path: a single preset with no custom overrides can claim
-        // a pre-built env and just start it (seconds) instead of building (~10m).
-        if (presetIds.length === 1 && !custom) {
-          const claimed = await manager.claimAndStart(presetIds[0], { name: ctx.body.name, prompt: prompt || undefined, model, agent });
-          if (claimed) {
-            ctx.send(202, { id: claimed.id, name: claimed.name, port: claimed.port, appPorts: claimed.appPorts ?? [], wpUrl: claimed.wpUrl, status: 'configuring', warm: true });
-            return;
-          }
-        }
-
-        const record = await manager.createEnvironment({ name: ctx.body.name, provision, prompt: prompt || undefined, model, agent });
-        ctx.send(202, { id: record.id, name: record.name, port: record.port, appPorts: record.appPorts ?? [], wpUrl: record.wpUrl, status: record.status });
+        const { warm, ...created } = await ops.createEnvironment(ctx.body);
+        ctx.send(202, warm ? { ...created, warm } : created);
       } catch (err) {
         if (err instanceof AllocationError) throw httpErr(err.status, err.message);
         throw err;
@@ -132,24 +67,11 @@ export function buildRoutes(config, registry, manager, sessions, presets, settin
       const tail = Math.min(parseInt(ctx.query.get('tail') || '200', 10) || 200, 5000);
       ctx.send(200, await manager.logs(envOr404(ctx), which, tail));
     }),
-    // One-click passwordless wp-admin login: mint a one-time, 5-min link via the
-    // agent-connector ability already installed in every env. Returns a localhost
-    // URL with the token; the UI rebases the host:port (redemption uses the
-    // browser's request host, so the token is host-agnostic).
+    // One-click passwordless wp-admin login (see ops.mintAdminLogin). Returns
+    // http://<DEVBOX_PUBLIC_HOST>:<envPort>/?acfw_login=… — directly openable;
+    // the UI still rebases host:port onto its own hostname before opening.
     route('POST', '/environments/:id/admin-login', async (ctx) => {
-      const env = envOr404(ctx);
-      await assertUsable(env);
-      let res;
-      try {
-        res = await exec(env, 'workspace', ['wp', 'eval', ADMIN_LOGIN_PHP], { timeout: 30_000 });
-      } catch (err) {
-        throw httpErr(502, `could not mint admin login link: ${String(err.stderr || err.message || '').trim().slice(0, 200)}`);
-      }
-      const url = String(res.stdout || '').trim();
-      if (!/^https?:\/\/\S*acfw_login=/.test(url)) {
-        throw httpErr(502, `admin login link unavailable: ${String(res.stderr || url || '').trim().slice(0, 200)}`);
-      }
-      ctx.send(200, { loginUrl: url });
+      ctx.send(200, await ops.mintAdminLogin(envOr404(ctx)));
     }),
     route('POST', '/environments/:id/stop', async (ctx) => ctx.send(200, await manager.stop(envOr404(ctx)))),
     route('POST', '/environments/:id/start', async (ctx) => {
@@ -170,11 +92,8 @@ export function buildRoutes(config, registry, manager, sessions, presets, settin
       ctx.send(200, await manager.describe(updated));
     }),
     route('DELETE', '/environments/:id', async (ctx) => {
-      const env = envOr404(ctx);
       // Sessions are tied to their environment: destroying it deletes them all.
-      sessions.engine.killEnvSessions(env.id);
-      for (const s of sessions.store.listByEnv(env.id)) await deleteSession(s);
-      await manager.destroy(env);
+      await ops.destroyEnvironment(envOr404(ctx));
       ctx.send(200, { deleted: true });
     }),
 
@@ -283,17 +202,18 @@ export function buildRoutes(config, registry, manager, sessions, presets, settin
       ctx.send(200, publicSession(updated));
     }),
 
+    // partials: 'all' (default, raw log) | 'live' (only the token deltas that
+    // rebuild the in-progress line — what the UI uses) | 'none'.
+    // clip: truncate any single string inside an event to N chars (0 = off,
+    // the default) — giant tool_results (screenshots, whole files) can be
+    // 1MB+ each. The UI passes both; defaults keep the raw-log behavior.
     route('GET', '/sessions/:id/transcript', async (ctx) => {
       const s = sessionOr404(ctx);
       const tail = Math.min(parseInt(ctx.query.get('tail') || '2000', 10) || 2000, 20000);
-      let events = [];
-      try {
-        const text = await readFile(s.eventLogPath, 'utf8');
-        events = text.split('\n').filter(Boolean).slice(-tail).map((l) => {
-          try { return JSON.parse(l); } catch { return { type: 'raw', text: l }; }
-        });
-      } catch { /* no log yet */ }
-      ctx.send(200, { events });
+      const p = ctx.query.get('partials');
+      const partials = p === 'live' || p === 'none' ? p : 'all';
+      const clip = Math.max(0, Math.min(parseInt(ctx.query.get('clip') || '0', 10) || 0, 1 << 20));
+      ctx.send(200, await ops.readTranscript(s, { tail, partials, clip }));
     }),
 
     route('GET', '/sessions/:id/stream', async (ctx) => {
@@ -312,7 +232,7 @@ export function buildRoutes(config, registry, manager, sessions, presets, settin
     }),
 
     route('DELETE', '/sessions/:id', async (ctx) => {
-      await deleteSession(sessionOr404(ctx));
+      await ops.deleteSession(sessionOr404(ctx));
       ctx.send(200, { deleted: true });
     }),
 
@@ -320,82 +240,6 @@ export function buildRoutes(config, registry, manager, sessions, presets, settin
     route('GET', '/', staticHandler, { kind: 'static' }),
     route('GET', '/ui/:rest*', staticHandler, { kind: 'static' }),
   ];
-}
-
-function httpErr(status, message) {
-  const e = new Error(message);
-  e.status = status;
-  return e;
-}
-
-// Run inside the workspace via `wp eval`: mint a one-time admin login URL for the
-// site's first administrator through the agent-connector ability's service. The
-// FQCN is the same whether the companion ships as default- or universal-abilities.
-const ADMIN_LOGIN_PHP = `
-$admins = get_users(array('role' => 'administrator', 'number' => 1, 'orderby' => 'ID'));
-$u = $admins ? $admins[0] : null;
-if (!$u) { fwrite(STDERR, 'no administrator user'); exit(1); }
-$cls = 'AgentConnectorForWp\\DefaultAbilities\\Services\\AdminLoginLink';
-if (!class_exists($cls)) { fwrite(STDERR, 'abilities plugin (admin login) not active'); exit(1); }
-$r = $cls::create($u->ID, 'index.php', 300);
-if (is_wp_error($r)) { fwrite(STDERR, $r->get_error_message()); exit(1); }
-echo $r['login_url'];
-`;
-
-const SLUG_RE = /^[a-z0-9][a-z0-9._-]*$/i; // plugin slug
-const CONST_RE = /^[A-Za-z_][A-Za-z0-9_]*$/; // PHP constant name
-
-// Validate the activate list + defines map shared by provision and presets.
-// Throws 400 on a bad slug / constant name / defines shape.
-function validateProvisionFields(body = {}) {
-  const setupScript = typeof body.setupScript === 'string' ? body.setupScript : '';
-  const devScript = typeof body.devScript === 'string' ? body.devScript : '';
-
-  let activate = [];
-  if (body.activate != null) {
-    if (!Array.isArray(body.activate)) throw httpErr(400, 'activate must be an array of plugin slugs');
-    activate = body.activate.filter((s) => typeof s === 'string' && s.trim()).map((s) => s.trim());
-    for (const s of activate) if (!SLUG_RE.test(s)) throw httpErr(400, `invalid plugin slug "${s}"`);
-  }
-
-  let defines = {};
-  if (body.defines != null) {
-    if (typeof body.defines !== 'object' || Array.isArray(body.defines)) {
-      throw httpErr(400, 'defines must be a JSON object of { "WP_CONST": value } pairs');
-    }
-    defines = body.defines;
-    for (const k of Object.keys(defines)) if (!CONST_RE.test(k)) throw httpErr(400, `invalid define name "${k}"`);
-  }
-
-  // Container ports to publish per env (each gets a unique host port from the
-  // allocator), e.g. [3000] for a Next.js dev server.
-  let appPorts = [];
-  if (body.appPorts != null) {
-    if (!Array.isArray(body.appPorts)) throw httpErr(400, 'appPorts must be an array of container ports, e.g. [3000]');
-    appPorts = body.appPorts.map((p) => parseInt(p, 10));
-    for (const p of appPorts) {
-      if (!Number.isInteger(p) || p < 1 || p > 65535) throw httpErr(400, `invalid app port "${p}" — expected an integer 1-65535`);
-    }
-    appPorts = [...new Set(appPorts)];
-  }
-
-  return { setupScript, devScript, activate, defines, appPorts };
-}
-
-// A preset additionally carries name/description.
-function validatePreset(body = {}) {
-  const name = String((body && body.name) || '').trim();
-  if (!name) throw httpErr(400, 'preset name is required');
-  return { name, description: typeof body.description === 'string' ? body.description : '', ...validateProvisionFields(body) };
-}
-
-// Custom (ad-hoc) provision fields for a create. Returns null when nothing was
-// specified (a blank WordPress env, or presets-only).
-function normalizeProvision(body) {
-  if (!body || typeof body !== 'object') return null;
-  const { setupScript, devScript, activate, defines, appPorts } = validateProvisionFields(body);
-  if (!setupScript && !devScript && !activate.length && !Object.keys(defines).length && !appPorts.length) return null;
-  return { setupScript, devScript, activate, defines, appPorts };
 }
 
 // composeProvision lives in provision.js (shared with the warm-pool builder in

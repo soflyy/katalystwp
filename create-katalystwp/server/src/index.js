@@ -15,7 +15,9 @@ import { Manager } from './manager.js';
 import { SessionStore } from './sessions.js';
 import { SessionBus } from './sessionbus.js';
 import { ClaudeEngine, reapAgents } from './claude.js';
+import { buildOps } from './ops.js';
 import { buildRoutes } from './routes.js';
+import { buildMcpRoutes } from './mcp.js';
 import { createServer } from './http.js';
 
 // Load server/.env (or $DEVBOX_ENV_FILE) into process.env if present, using
@@ -71,7 +73,12 @@ async function main() {
     log.info(`[${env.name}] started initial session ${s.id}`);
   };
 
-  const routes = buildRoutes(config, registry, manager, sessions, presets, settings);
+  // Shared ops layer feeds both API surfaces: JSON HTTP routes and MCP (/mcp).
+  const ops = buildOps(config, registry, manager, sessions, presets);
+  const routes = [
+    ...buildRoutes(config, registry, manager, sessions, presets, settings, ops),
+    ...buildMcpRoutes(config, registry, manager, sessions, presets, settings, ops),
+  ];
   const server = createServer(config, routes);
 
   server.listen(config.port, config.bind, () => {

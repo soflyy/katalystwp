@@ -19,6 +19,13 @@ Connector (dev)** (check out `agent-connector-for-wp` for the agent to work on).
 You do **not** need a special client — every action is an HTTP request you can
 make with `curl` (or any HTTP library).
 
+> **Using MCP instead?** The same surface is available as an MCP server at
+> `POST /mcp` (Streamable HTTP, same bearer token):
+> `claude mcp add --transport http katalyst http://<host>:4000/mcp --header "Authorization: Bearer <token>"`.
+> Once connected, call the `get_instructions` tool for the MCP-flavored version
+> of this guide (generated from the live tool table, always in sync). The rest
+> of this document describes the raw HTTP API.
+
 ## Connection
 
 Two values the operator gives you (fill these in):
@@ -45,7 +52,8 @@ preset). **Poll `GET /environments/<name>` until `status` is `running`.**
 #    name, presetIds (array), provision (custom setup), prompt (first Claude message), model
 curl -s -H "Authorization: Bearer $TOK" -X POST "$BASE/environments" \
   -d '{"name":"my-devbox"}'
-# → {"id":"env_…","name":"my-devbox","port":9000,"wpUrl":"http://localhost:9000","status":"scaffolding"}
+# → {"id":"env_…","name":"my-devbox","port":9000,"wpUrl":"http://<host>:9000","status":"scaffolding"}
+#   (wpUrl and admin-login URLs use the server's DEVBOX_PUBLIC_HOST — directly openable)
 
 # 2. Poll until running (or failed). Repeat every ~10s.
 curl -s -H "Authorization: Bearer $TOK" "$BASE/environments/my-devbox"
@@ -71,7 +79,7 @@ running. If you pass `presetIds`, fetch the available ones from `GET /presets`.
 | `POST /sessions/:id/messages` | `{prompt}` → continue (`--resume`); `409` if a turn is active. |
 | `GET /sessions` · `GET /sessions/:id` | list / one session. |
 | `GET /sessions/:id/stream` | **SSE** live `stream-json` (auth: bearer or `?access_token=`). |
-| `GET /sessions/:id/transcript?tail=N` | full event history. |
+| `GET /sessions/:id/transcript?tail=N` | full event history. Add `&partials=none` to drop token deltas and `&clip=16384` to truncate giant strings (screenshots, whole-file tool results) — recommended before reading a long session. |
 | `PATCH /sessions/:id` | `{title}` → rename. |
 | `POST /sessions/:id/interrupt` · `DELETE /sessions/:id` | interrupt the turn / delete the session. |
 | `GET /presets` · `POST/PUT/DELETE /presets[/:id]` | manage provisioning presets. |

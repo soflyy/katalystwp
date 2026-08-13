@@ -141,7 +141,9 @@ export async function allocate(registry, config, { nameHint, pool = null, appPor
       // Host-published dev-server ports ({ host, container }), allocated from
       // the same range as `port`. Empty for envs that don't publish any.
       appPorts: allocatedAppPorts,
-      wpUrl: `http://localhost:${port}`,
+      // No wpUrl stored: public URLs are built from DEVBOX_PUBLIC_HOST + port
+      // at view time (status.js publicView / ops.js), so a host config change
+      // never leaves stale URLs behind (issue #74).
       status: 'scaffolding',
       createdAt: new Date().toISOString(),
       setupStartedAt: null,
