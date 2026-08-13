@@ -78,7 +78,7 @@ running. If you pass `presetIds`, fetch the available ones from `GET /presets`.
 | `POST /sessions/:id/messages` | `{prompt}` → continue (`--resume`); `409` if a turn is active. |
 | `GET /sessions` · `GET /sessions/:id` | list / one session. |
 | `GET /sessions/:id/stream` | **SSE** live `stream-json` (auth: bearer or `?access_token=`). |
-| `GET /sessions/:id/transcript?tail=N` | full event history. |
+| `GET /sessions/:id/transcript?tail=N` | full event history. Add `&partials=none` to drop token deltas and `&clip=16384` to truncate giant strings (screenshots, whole-file tool results) — recommended before reading a long session. |
 | `PATCH /sessions/:id` | `{title}` → rename. |
 | `POST /sessions/:id/interrupt` · `DELETE /sessions/:id` | interrupt the turn / delete the session. |
 | `GET /presets` · `POST/PUT/DELETE /presets[/:id]` | manage provisioning presets. |

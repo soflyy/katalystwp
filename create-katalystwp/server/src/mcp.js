@@ -13,7 +13,6 @@
 // `get_instructions` tool, so the docs an agent sees can never drift from the
 // tools it can call.
 
-import { readFile } from 'node:fs/promises';
 import { route } from './http.js';
 import { systemHealth } from './health.js';
 import { AGENTS } from './claude.js';
@@ -55,20 +54,6 @@ export function buildMcpRoutes(config, registry, manager, sessions, presets, set
       }
       await sleep(2000);
     }
-  };
-
-  const readTranscript = async (s, tail, includePartial) => {
-    let events = [];
-    try {
-      const text = await readFile(s.eventLogPath, 'utf8');
-      events = text.split('\n').filter(Boolean).map((l) => {
-        try { return JSON.parse(l); } catch { return { type: 'raw', text: l }; }
-      });
-    } catch { /* no log yet */ }
-    // Token-delta stream_events triple the size and add nothing once the turn
-    // is over; drop them unless explicitly asked for.
-    if (!includePartial) events = events.filter((e) => e.type !== 'stream_event');
-    return { events: events.slice(-tail), totalEvents: events.length };
   };
 
   const TOOLS = [
@@ -348,14 +333,19 @@ export function buildMcpRoutes(config, registry, manager, sessions, presets, set
     {
       name: 'get_transcript',
       category: 'Agent sessions',
-      description: 'The session\'s event history (assistant/user messages incl. tool use, and per-turn results). Token-by-token partials are excluded unless includePartial.',
+      description: 'The session\'s event history (assistant/user messages incl. tool use, and per-turn results). Token-by-token partials are excluded unless includePartial, and giant strings inside events (screenshots, whole-file tool results) are truncated to clipChars.',
       inputSchema: args({
         sessionId: SESSION_ARG,
         tail: int('Events to return from the end, max 5000 (default 200).'),
         includePartial: { type: 'boolean', description: 'Include raw stream_event token deltas (verbose; default false).' },
+        clipChars: int('Max chars per string inside an event before truncation, 0 = unlimited (default 16384).'),
       }, ['sessionId']),
-      handler: ({ sessionId, tail, includePartial }) =>
-        readTranscript(ops.sessionByRef(sessionId), Math.min(parseInt(tail, 10) || 200, 5000), !!includePartial),
+      handler: ({ sessionId, tail, includePartial, clipChars }) =>
+        ops.readTranscript(ops.sessionByRef(sessionId), {
+          tail: Math.min(parseInt(tail, 10) || 200, 5000),
+          partials: includePartial ? 'all' : 'none',
+          clip: clipChars === 0 ? 0 : Math.max(0, parseInt(clipChars, 10) || 16384),
+        }),
     },
     {
       name: 'interrupt_session',

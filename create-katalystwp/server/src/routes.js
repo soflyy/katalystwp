@@ -2,7 +2,6 @@
 // also used by the MCP endpoint) or the manager/session engine directly, shape
 // the response. `sessions` bundles { store, engine, bus }.
 
-import { readFile } from 'node:fs/promises';
 import { route } from './http.js';
 import { addSecrets } from './log.js';
 import { systemHealth } from './health.js';
@@ -202,17 +201,18 @@ export function buildRoutes(config, registry, manager, sessions, presets, settin
       ctx.send(200, publicSession(updated));
     }),
 
+    // partials: 'all' (default, raw log) | 'live' (only the token deltas that
+    // rebuild the in-progress line — what the UI uses) | 'none'.
+    // clip: truncate any single string inside an event to N chars (0 = off,
+    // the default) — giant tool_results (screenshots, whole files) can be
+    // 1MB+ each. The UI passes both; defaults keep the raw-log behavior.
     route('GET', '/sessions/:id/transcript', async (ctx) => {
       const s = sessionOr404(ctx);
       const tail = Math.min(parseInt(ctx.query.get('tail') || '2000', 10) || 2000, 20000);
-      let events = [];
-      try {
-        const text = await readFile(s.eventLogPath, 'utf8');
-        events = text.split('\n').filter(Boolean).slice(-tail).map((l) => {
-          try { return JSON.parse(l); } catch { return { type: 'raw', text: l }; }
-        });
-      } catch { /* no log yet */ }
-      ctx.send(200, { events });
+      const p = ctx.query.get('partials');
+      const partials = p === 'live' || p === 'none' ? p : 'all';
+      const clip = Math.max(0, Math.min(parseInt(ctx.query.get('clip') || '0', 10) || 0, 1 << 20));
+      ctx.send(200, await ops.readTranscript(s, { tail, partials, clip }));
     }),
 
     route('GET', '/sessions/:id/stream', async (ctx) => {

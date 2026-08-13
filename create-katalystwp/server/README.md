@@ -85,7 +85,7 @@ DEVBOX_API_TOKEN=secret GITHUB_TOKEN=… npm start
 | `POST` | `/sessions/:id/messages` | `{prompt}` → 202; continue the session (`--resume`); 409 if a turn is active |
 | `GET` | `/sessions` / `/sessions/:id` | list / one session (id, claudeSessionId, status, cost, `sshResumeHint`) |
 | `GET` | `/sessions/:id/stream` | **SSE** live stream-json (auth: bearer or `?access_token=`) |
-| `GET` | `/sessions/:id/transcript?tail=N` | full event history (ndjson) |
+| `GET` | `/sessions/:id/transcript?tail=N` | full event history; `&partials=live\|none` drops token deltas, `&clip=N` truncates giant strings (screenshots, file blobs) |
 | `POST` | `/sessions/:id/interrupt` | SIGINT the active turn |
 | `DELETE` | `/sessions/:id` | forget the session |
 | `GET` | `/host` | system health: memory/CPU/disk, docker df, per-env container memory, RAM-headroom estimate |

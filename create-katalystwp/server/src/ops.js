@@ -4,7 +4,7 @@
 // warm-pool fast path), admin-login minting, session shaping, and input
 // validation. Endpoint files stay thin: parse transport, call ops, shape reply.
 
-import { rm } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import { exec } from './docker.js';
 import { AGENTS } from './claude.js';
 import { composeProvision } from './provision.js';
@@ -13,6 +13,19 @@ export function httpErr(status, message) {
   const e = new Error(message);
   e.status = status;
   return e;
+}
+
+// Deep-copy a JSON value, truncating any string longer than `max` chars with
+// an explicit marker. Keys are untouched; short strings pass through as-is.
+function clipStrings(v, max) {
+  if (typeof v === 'string') return v.length > max ? `${v.slice(0, max)}…[+${v.length - max} chars truncated]` : v;
+  if (Array.isArray(v)) return v.map((x) => clipStrings(x, max));
+  if (v && typeof v === 'object') {
+    const o = {};
+    for (const k of Object.keys(v)) o[k] = clipStrings(v[k], max);
+    return o;
+  }
+  return v;
 }
 
 // Run inside the workspace via `wp eval`: mint a one-time admin login URL for the
@@ -164,6 +177,35 @@ export function buildOps(config, registry, manager, sessions, presets) {
     return { loginUrl: url };
   };
 
+  // Read a session's event log.
+  //
+  // `partials` controls stream_event token deltas (numerous but only needed to
+  // rebuild the in-progress line): 'all' (raw log), 'live' (only the deltas
+  // after the last assistant message — exactly what reconstructs the current
+  // partial), 'none' (drop them all). Deltas of completed messages are
+  // superseded by their assistant event either way.
+  //
+  // `clip` (chars, 0 = off) truncates any single string inside an event —
+  // giant tool_results (base64 screenshots, whole files) can be 1MB+ each and
+  // dominate a long turn's payload far beyond what any viewer needs.
+  const readTranscript = async (s, { tail = 2000, partials = 'all', clip = 0 } = {}) => {
+    let events = [];
+    try {
+      const text = await readFile(s.eventLogPath, 'utf8');
+      events = text.split('\n').filter(Boolean).map((l) => {
+        try { return JSON.parse(l); } catch { return { type: 'raw', text: l }; }
+      });
+    } catch { /* no log yet */ }
+    if (partials !== 'all') {
+      const lastAssistant = events.findLastIndex((e) => e.type === 'assistant');
+      events = events.filter((e, i) => e.type !== 'stream_event' || (partials === 'live' && i > lastAssistant));
+    }
+    const totalEvents = events.length;
+    events = events.slice(-tail);
+    if (clip > 0) events = events.map((e) => clipStrings(e, clip));
+    return { events, totalEvents };
+  };
+
   // Create an environment: compose any selected presets (in order) with optional
   // custom fields; a single preset with no custom overrides can claim a warm
   // pre-built env (seconds) instead of building (~10m). Async either way — the
@@ -200,6 +242,7 @@ export function buildOps(config, registry, manager, sessions, presets) {
     destroyEnvironment,
     publicSession,
     mintAdminLogin,
+    readTranscript,
     createEnvironment,
   };
 }

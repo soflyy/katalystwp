@@ -222,26 +222,36 @@ function Sidebar({ sessions, envs, selectedId, now, onSelect, onNewEnv, onEnvAct
     </aside>`;
 }
 
+// A single runaway blob (base64 screenshot, whole-file tool payload) can be
+// 1MB+ — clip what lands in the DOM so the transcript stays scrollable. The
+// history fetch is clipped server-side too; this also covers live SSE events.
+function clipText(t, max = 20000) {
+  const s = typeof t === 'string' ? t : String(t ?? '');
+  return s.length > max ? `${s.slice(0, max)}\n…[+${(s.length - max).toLocaleString()} chars clipped]` : s;
+}
+
 function Bubble({ it }) {
-  if (it.kind === 'user') return html`<div class="bubble user"><pre>${it.text}</pre></div>`;
-  if (it.kind === 'assistant') return html`<div class="bubble assistant"><pre>${it.text}</pre></div>`;
+  if (it.kind === 'user') return html`<div class="bubble user"><pre>${clipText(it.text)}</pre></div>`;
+  if (it.kind === 'assistant') return html`<div class="bubble assistant"><pre>${clipText(it.text)}</pre></div>`;
   if (it.kind === 'system') return html`<div class="chip">${it.text}</div>`;
   if (it.kind === 'control') return html`<div class="divider">${it.text}</div>`;
   if (it.kind === 'tool_use')
-    return html`<details class="tool"><summary>🔧 ${it.name}</summary><pre>${JSON.stringify(it.input, null, 2)}</pre></details>`;
+    return html`<details class="tool"><summary>🔧 ${it.name}</summary><pre>${clipText(JSON.stringify(it.input, null, 2))}</pre></details>`;
   if (it.kind === 'tool_result') {
     const text = typeof it.content === 'string' ? it.content : JSON.stringify(it.content, null, 2);
-    return html`<details class="tool result"><summary>↳ result</summary><pre>${text}</pre></details>`;
+    return html`<details class="tool result"><summary>↳ result</summary><pre>${clipText(text)}</pre></details>`;
   }
   if (it.kind === 'result')
     return html`<div class="result-foot ${it.isError ? 'err' : ''}">✓ done · $${(it.cost || 0).toFixed(4)} · ${Math.round((it.ms || 0))}ms</div>`;
-  if (it.kind === 'stderr') return html`<div class="stderr"><pre>${it.text}</pre></div>`;
-  return html`<div class="raw"><pre>${it.text}</pre></div>`;
+  if (it.kind === 'stderr') return html`<div class="stderr"><pre>${clipText(it.text)}</pre></div>`;
+  return html`<div class="raw"><pre>${clipText(it.text)}</pre></div>`;
 }
 
 function SessionView({ session, now, onChanged, onBack, onDelete, onArchive, onRestore }) {
   const [items, setItems] = useState([]);
   const [partial, setPartial] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [loadErr, setLoadErr] = useState('');
   const [busy, setBusy] = useState(false);
   const [input, setInput] = useState('');
   const [editing, setEditing] = useState(false);
@@ -255,18 +265,25 @@ function SessionView({ session, now, onChanged, onBack, onDelete, onArchive, onR
 
   useEffect(() => {
     // Reset for the newly-selected session, load history, then go live.
-    setItems([]); setPartial(''); partialRef.current = { text: '' }; seen.current = new Set();
+    setItems([]); setPartial(''); setLoading(true); setLoadErr('');
+    partialRef.current = { text: '' }; seen.current = new Set();
     stick.current = true; setHasNew(false);
     let es;
     let cancelled = false;
     (async () => {
       try {
-        const { events } = await api(`/sessions/${id}/transcript?tail=5000`);
+        // partials=live: skip token deltas of completed messages (they're
+        // superseded by their assistant events and dominate a long turn's
+        // payload) — the server keeps just the tail that rebuilds the
+        // in-progress line. A missing log is a 200 with events:[] — a catch
+        // here is a real failure, so show it instead of a blank transcript.
+        const { events } = await api(`/sessions/${id}/transcript?tail=5000&partials=live&clip=16384`);
         const arr = [];
         for (const e of events) { if (e.uuid) seen.current.add(e.uuid); reduce(arr, partialRef.current, e); }
         if (!cancelled) { setItems(arr.slice()); setPartial(partialRef.current.text); }
-      } catch { /* fresh session, no transcript */ }
+      } catch (e) { if (!cancelled) setLoadErr(e.message || 'failed to load history'); }
       if (cancelled) return;
+      setLoading(false);
       es = new EventSource(streamUrl(id));
       es.onmessage = (m) => {
         let evt; try { evt = JSON.parse(m.data); } catch { return; }
@@ -354,9 +371,11 @@ function SessionView({ session, now, onChanged, onBack, onDelete, onArchive, onR
       </header>
       ${session.sshResumeHint && html`<div class="ssh muted" onClick=${() => copyText(session.sshResumeHint)} title="click to copy">SSH resume: <code>${session.sshResumeHint}</code></div>`}
       <div class="transcript" ref=${scroller} onScroll=${onTranscriptScroll}>
+        ${loading && !loadErr && html`<div class="muted pad">loading history…</div>`}
+        ${loadErr && html`<div class="err-msg">could not load history: ${loadErr}</div>`}
         ${items.map((it, i) => html`<${Bubble} it=${it} key=${i} />`)}
         ${partial && html`<div class="bubble assistant live"><pre>${partial}</pre><span class="cursor">▍</span></div>`}
-        ${running && !partial && html`<div class="muted pad">…thinking</div>`}
+        ${running && !partial && !loading && html`<div class="muted pad">…thinking</div>`}
       </div>
       ${hasNew && html`<button class="new-msgs" onClick=${jumpToBottom}>↓ New messages</button>`}
       <footer class="composer">
