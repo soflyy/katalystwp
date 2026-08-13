@@ -31,7 +31,7 @@ The server is a **thin orchestrator over the scaffolded project's own scripts**:
 | `DEVBOX_BIND` | `127.0.0.1` | bind address. `0.0.0.0` (or a specific IP) to reach it over the network — **requires `DEVBOX_API_TOKEN`** (the server refuses to start network-exposed without one) and a firewall/VPN |
 | `DEVBOX_API_TOKEN` | — | if set, all routes require `Authorization: Bearer <token>` |
 | `WP_PORT_RANGE` | `9000-9999` | host ports to allocate from (the env's WP port **and** its app ports) |
-| `DEVBOX_PUBLIC_HOST` | `localhost` | hostname/IP browsers use to reach this Docker host (your server's public IP / DNS name) — passed to the scaffolder as `--public-host` so setup scripts can build browser-valid URLs |
+| `DEVBOX_PUBLIC_HOST` | `localhost` | hostname/IP browsers use to reach this Docker host (your server's public IP / DNS name) — used in every returned URL (`wpUrl`, admin-login `loginUrl`) and passed to the scaffolder as `--public-host` so setup scripts can build browser-valid URLs |
 | `SANDBOX_SETUP_ENV_*` | — | setup secrets forwarded to every env's setup script with the prefix stripped (see above) |
 | `MAX_ENVIRONMENTS` | `25` | hard cap on environments |
 | `BUILD_CONCURRENCY` | `2` | simultaneous `docker build`/setup runs |

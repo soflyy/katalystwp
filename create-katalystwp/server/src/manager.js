@@ -247,7 +247,7 @@ export class Manager {
 
   async describe(record) {
     const { status } = this._gather(record);
-    return publicView(record, { status });
+    return publicView(record, { status, publicHost: this.config.publicHost });
   }
 
   async list() {

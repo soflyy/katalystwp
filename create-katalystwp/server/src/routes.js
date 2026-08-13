@@ -67,8 +67,9 @@ export function buildRoutes(config, registry, manager, sessions, presets, settin
       const tail = Math.min(parseInt(ctx.query.get('tail') || '200', 10) || 200, 5000);
       ctx.send(200, await manager.logs(envOr404(ctx), which, tail));
     }),
-    // One-click passwordless wp-admin login (see ops.mintAdminLogin). The UI
-    // rebases the returned localhost URL's host:port.
+    // One-click passwordless wp-admin login (see ops.mintAdminLogin). Returns
+    // http://<DEVBOX_PUBLIC_HOST>:<envPort>/?acfw_login=… — directly openable;
+    // the UI still rebases host:port onto its own hostname before opening.
     route('POST', '/environments/:id/admin-login', async (ctx) => {
       ctx.send(200, await ops.mintAdminLogin(envOr404(ctx)));
     }),

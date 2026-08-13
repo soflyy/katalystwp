@@ -52,7 +52,8 @@ preset). **Poll `GET /environments/<name>` until `status` is `running`.**
 #    name, presetIds (array), provision (custom setup), prompt (first Claude message), model
 curl -s -H "Authorization: Bearer $TOK" -X POST "$BASE/environments" \
   -d '{"name":"my-devbox"}'
-# → {"id":"env_…","name":"my-devbox","port":9000,"wpUrl":"http://localhost:9000","status":"scaffolding"}
+# → {"id":"env_…","name":"my-devbox","port":9000,"wpUrl":"http://<host>:9000","status":"scaffolding"}
+#   (wpUrl and admin-login URLs use the server's DEVBOX_PUBLIC_HOST — directly openable)
 
 # 2. Poll until running (or failed). Repeat every ~10s.
 curl -s -H "Authorization: Bearer $TOK" "$BASE/environments/my-devbox"

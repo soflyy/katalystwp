@@ -159,9 +159,11 @@ export function buildOps(config, registry, manager, sessions, presets) {
   });
 
   // One-click passwordless wp-admin login: mint a one-time, 5-min link via the
-  // agent-connector ability already installed in every env. Returns a localhost
-  // URL with the token; callers rebase the host:port (redemption uses the
-  // request host, so the token is host-agnostic).
+  // agent-connector ability already installed in every env. WP emits the URL on
+  // its own (in-container) home host, so rebase it to the public host + the
+  // env's published port to make it directly openable (issue #74) — redemption
+  // uses the request host, so the token is host-agnostic. Plain http until env
+  // sites are proxied too (TLS phase 2, issue #73).
   const mintAdminLogin = async (env) => {
     await assertUsable(env);
     let res;
@@ -174,7 +176,8 @@ export function buildOps(config, registry, manager, sessions, presets) {
     if (!/^https?:\/\/\S*acfw_login=/.test(url)) {
       throw httpErr(502, `admin login link unavailable: ${String(res.stderr || url || '').trim().slice(0, 200)}`);
     }
-    return { loginUrl: url };
+    const u = new URL(url);
+    return { loginUrl: `http://${config.publicHost}:${env.port}${u.pathname}${u.search}` };
   };
 
   // Read a session's event log.
@@ -223,15 +226,19 @@ export function buildOps(config, registry, manager, sessions, presets) {
     const model = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : undefined;
     const agent = AGENTS[body.agent] ? body.agent : undefined; // first-prompt session agent; else default
 
+    // wpUrl from the public host, not the stored record (issue #74) — same as
+    // publicView in status.js.
+    const wpUrl = (rec) => `http://${config.publicHost}:${rec.port}`;
+
     if (presetIds.length === 1 && !custom) {
       const claimed = await manager.claimAndStart(presetIds[0], { name: body.name, prompt: prompt || undefined, model, agent });
       if (claimed) {
-        return { id: claimed.id, name: claimed.name, port: claimed.port, appPorts: claimed.appPorts ?? [], wpUrl: claimed.wpUrl, status: 'configuring', warm: true };
+        return { id: claimed.id, name: claimed.name, port: claimed.port, appPorts: claimed.appPorts ?? [], wpUrl: wpUrl(claimed), status: 'configuring', warm: true };
       }
     }
 
     const record = await manager.createEnvironment({ name: body.name, provision, prompt: prompt || undefined, model, agent });
-    return { id: record.id, name: record.name, port: record.port, appPorts: record.appPorts ?? [], wpUrl: record.wpUrl, status: record.status, warm: false };
+    return { id: record.id, name: record.name, port: record.port, appPorts: record.appPorts ?? [], wpUrl: wpUrl(record), status: record.status, warm: false };
   };
 
   return {

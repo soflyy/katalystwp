@@ -42,7 +42,7 @@ export function computeStatus({ record, jobState, ps }) {
 }
 
 // Public-facing view of an environment (no secrets).
-export function publicView(record, { status }) {
+export function publicView(record, { status, publicHost }) {
   return {
     id: record.id,
     name: record.name,
@@ -56,7 +56,11 @@ export function publicView(record, { status }) {
     // Host-published dev-server ports ({ host, container }) — the UI links them
     // like `port`, rebased on the browser's hostname.
     appPorts: record.appPorts ?? [],
-    wpUrl: record.wpUrl,
+    // Built from DEVBOX_PUBLIC_HOST at view time (not the stored record, which
+    // predates any host config change) so remote clients get a directly
+    // openable URL, not http://localhost:<port> (issue #74). Plain http until
+    // env sites are proxied too (TLS phase 2, issue #73).
+    wpUrl: `http://${publicHost || 'localhost'}:${record.port}`,
     status,
     preset: record.preset || null,
     createdAt: record.createdAt,
