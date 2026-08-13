@@ -867,6 +867,7 @@ function SettingsModal({ onClose, onLogout }) {
             <input value=${wpEmail} onInput=${(e) => setWpEmail(e.target.value)} />
           </label>
           <p class="muted small">Token changes apply to newly-created environments and new Claude turns. WP-admin defaults seed new sites.</p>`}
+        <${McpConnect} />
         <${WarmPoolSection} />
         ${err && html`<div class="err-msg">${err}</div>`}
         ${saved && html`<div class="ok-msg">Saved.</div>`}
@@ -877,6 +878,24 @@ function SettingsModal({ onClose, onLogout }) {
           <button class="btn" onClick=${save} disabled=${!s || busy}>${busy ? 'Saving…' : 'Save'}</button>
         </div>
       </div>
+    </div>`;
+}
+
+// Copy-paste command to attach a local MCP client (Claude Code) to this
+// server's /mcp endpoint. Assembled entirely client-side: host = the origin
+// this page was loaded from, token = the API token this browser is already
+// authed with (from localStorage — the server never returns it).
+function McpConnect() {
+  const t = token.get();
+  const cmd = `claude mcp add --transport http katalyst ${location.origin}/mcp`
+    + (t ? ` --header "Authorization: Bearer ${t}"` : '');
+  return html`
+    <div class="mcpconnect">
+      <h4>Connect an agent (MCP)</h4>
+      <p class="muted small">Run this on your machine to let Claude Code drive this server — create environments,
+        run agent sessions, mint admin logins. Any MCP client works (Streamable HTTP endpoint at <code>/mcp</code>).
+        The command includes this browser's API token — treat it like a password.</p>
+      <${CopyLine} cmd=${cmd} />
     </div>`;
 }
 
