@@ -122,6 +122,7 @@ UI at `/`.
 - **Create is async** — poll until `running`, don't treat the `202` as ready.
 - **One WordPress port per env** is the only host port; returned as `wpUrl`. Inside the env's containers the site is `http://wordpress`.
 - **wp-admin:** `POST /environments/:id/admin-login` returns a one-time passwordless login URL — no need to know the admin password.
+- **Models:** `model` is optional wherever it appears. Omitted, a Claude session runs the server default (the `opus` alias — resolved by Claude Code to the **latest Opus**). Pass any Claude Code alias or id (`sonnet`, `haiku`, `claude-fable-5`, …) to override; the model is fixed for the session's lifetime.
 - **Capacity:** each env is several containers and a few GB of RAM. Call `GET /host` before creating many (it estimates how many more fit); respect `503 at capacity`.
 - **Credentials are the operator's, server-side** (managed on the Settings page) — you never send GitHub/Claude tokens.
 - **Errors** are `{"error":"…"}` with a 4xx/5xx status: `401` bad/missing token, `404` unknown env, `409` name taken / turn in progress, `503` at capacity.

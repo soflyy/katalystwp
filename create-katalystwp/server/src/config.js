@@ -100,8 +100,9 @@ export function loadConfig(env = process.env) {
     // or ~/.agent-sandbox/oauth-token, exactly like `npm run claude`.
     sessionsPath: join(dataDir, 'sessions.json'),
     sessionsDir: join(dataDir, 'sessions'),
-    // Default model for sessions. Defaults to the latest Opus (the `opus` alias
-    // → opus 4.8) rather than Claude Code's built-in headless default (Sonnet),
+    // Default model for sessions. The `opus` alias — resolved by Claude Code in
+    // the workspace to the LATEST Opus at run time (no version pinned here) —
+    // rather than Claude Code's built-in headless default (Sonnet),
     // since these are throwaway dev boxes where capability matters. Override with
     // any model id via CLAUDE_DEFAULT_MODEL, or per-session in the UI/API.
     claudeDefaultModel: env.CLAUDE_DEFAULT_MODEL || 'opus',

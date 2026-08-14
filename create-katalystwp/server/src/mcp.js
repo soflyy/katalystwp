@@ -33,6 +33,12 @@ export function buildMcpRoutes(config, registry, manager, sessions, presets, set
   const ENV_ARG = str('Environment name or id (both accepted everywhere).');
   const SESSION_ARG = str('Session id (from start_session / list_sessions).');
   const PRESET_ARG = str('Preset id (from list_presets).');
+  // Built from live config so the docs can never disagree with the default.
+  const MODEL_ARG = str(
+    `Model for the session (optional). Omit for the server default — "${config.claudeDefaultModel}", which Claude Code resolves to the latest Opus. ` +
+    'Accepts any Claude Code model alias or id (e.g. opus, sonnet, haiku, claude-fable-5), passed verbatim to the agent CLI. ' +
+    'Fixed for the session\'s lifetime; codex/opencode agents have their own defaults.',
+  );
   const args = (properties = {}, required = []) => ({ type: 'object', properties, required });
 
   // Poll an env by id until its status settles (running/failed), it disappears,
@@ -96,7 +102,7 @@ export function buildMcpRoutes(config, registry, manager, sessions, presets, set
         name: str('Environment name, ^[a-z0-9][a-z0-9-]{1,38}$, unique. Omit for an auto-generated one.'),
         presetIds: { type: 'array', items: { type: 'string' }, description: 'Preset ids to compose, in order (from list_presets).' },
         prompt: str('Optional first agent prompt — starts a session automatically when the env becomes ready.'),
-        model: str('Model for that first session (optional).'),
+        model: MODEL_ARG,
         agent: str(`Agent for that first session: ${Object.keys(AGENTS).join(' | ')} (default claude).`),
         provision: {
           type: 'object',
@@ -263,7 +269,7 @@ export function buildMcpRoutes(config, registry, manager, sessions, presets, set
       inputSchema: args({
         env: ENV_ARG,
         prompt: str('The first prompt/task for the agent.'),
-        model: str('Model override (optional).'),
+        model: MODEL_ARG,
         agent: str(`Agent CLI to use: ${Object.keys(AGENTS).join(' | ')} (default claude).`),
       }, ['env', 'prompt']),
       handler: async ({ env, prompt, model, agent }) => {
@@ -417,7 +423,7 @@ export function buildMcpRoutes(config, registry, manager, sessions, presets, set
   // and /control/shutdown (kills the control server) — those stay browser-only.
 
   const byName = new Map(TOOLS.map((t) => [t.name, t]));
-  const instructions = buildInstructions(TOOLS);
+  const instructions = buildInstructions(TOOLS, config);
 
   // ---- JSON-RPC dispatch --------------------------------------------------
   const rpcResult = (id, result) => ({ jsonrpc: '2.0', id, result });
@@ -481,7 +487,7 @@ export function buildMcpRoutes(config, registry, manager, sessions, presets, set
 // Built from the same TOOLS table that serves tools/list, so the guide always
 // matches the callable surface. Served as initialize.instructions AND via the
 // get_instructions tool.
-function buildInstructions(tools) {
+function buildInstructions(tools, config) {
   const sig = (t) => {
     const req = new Set(t.inputSchema.required || []);
     const names = Object.keys(t.inputSchema.properties || {});
@@ -521,6 +527,11 @@ git, gh, and the agent CLIs. Environments are provisioned by composable
 
 Passing \`prompt\` to \`create_environment\` fuses the two flows: the session
 starts automatically the moment the env is ready.
+
+Both accept an optional \`model\` — any Claude Code alias or id, passed verbatim
+to the agent CLI. Omitted, a claude session runs the server default
+("${config.claudeDefaultModel}", resolved by Claude Code to the latest Opus).
+The model is fixed for the session's lifetime.
 
 ## Environment status lifecycle
 \`scaffolding\` → \`setting-up\` → \`configuring\` → **\`running\`** (create pipeline; wait it out)
