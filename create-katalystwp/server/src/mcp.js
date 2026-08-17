@@ -119,6 +119,19 @@ export function buildMcpRoutes(config, registry, manager, sessions, presets, set
       handler: (body) => ops.createEnvironment(body),
     },
     {
+      name: 'duplicate_environment',
+      category: 'Environments',
+      description: 'Clone an existing environment into a new one — full copy of the WordPress database, files, plugins, and git checkouts on a fresh name and port. Agent sessions do NOT carry over. The source briefly stops during the copy (status "duplicating"), then restarts itself. Async — follow with wait_for_environment on the COPY. Useful as a snapshot before risky changes, or to A/B a fix against a baseline.',
+      inputSchema: args({
+        env: ENV_ARG,
+        name: str('Name for the copy (same rules as create_environment). Omit for an auto-generated one.'),
+        prompt: str('Optional first agent prompt — starts a session in the copy once it is ready.'),
+        model: MODEL_ARG,
+        agent: str(`Agent for that first session: ${Object.keys(AGENTS).join(' | ')} (default claude).`),
+      }, ['env']),
+      handler: (body) => ops.duplicateEnvironment(ops.envByRef(body.env), body),
+    },
+    {
       name: 'wait_for_environment',
       category: 'Environments',
       description: 'Block until an environment reaches running or failed (or the timeout passes — then call again; cold builds take ~10 min). Returns the environment description plus done:true/false.',
@@ -533,10 +546,16 @@ to the agent CLI. Omitted, a claude session runs the server default
 ("${config.claudeDefaultModel}", resolved by Claude Code to the latest Opus).
 The model is fixed for the session's lifetime.
 
+\`duplicate_environment({ env })\` clones an existing environment — full DB +
+files copy on a fresh name and port (the source briefly stops during the copy,
+then restarts; sessions don't carry over). Also accepts \`prompt\`/\`model\`, and
+is followed with \`wait_for_environment\` on the copy like a create.
+
 ## Environment status lifecycle
 \`scaffolding\` → \`setting-up\` → \`configuring\` → **\`running\`** (create pipeline; wait it out)
 · \`degraded\` (some containers down) · \`stopped\` (resume with start_environment)
-· \`failed\` (read get_setup_logs, then usually destroy and recreate).
+· \`failed\` (read get_setup_logs, then usually destroy and recreate)
+· \`duplicating\` (a copy of this env is being taken — it restarts on its own).
 
 ## Rules and gotchas
 - Environment names: \`^[a-z0-9][a-z0-9-]{1,38}$\`, unique. Omit to auto-generate.

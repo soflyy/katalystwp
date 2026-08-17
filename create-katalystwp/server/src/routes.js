@@ -73,6 +73,17 @@ export function buildRoutes(config, registry, manager, sessions, presets, settin
     route('POST', '/environments/:id/admin-login', async (ctx) => {
       ctx.send(200, await ops.mintAdminLogin(envOr404(ctx)));
     }),
+    // Clone an env: full data copy on a fresh name + port (sessions don't carry
+    // over; the source briefly stops during the copy, then restarts). Async
+    // like create — 202, then poll the COPY until `running`.
+    route('POST', '/environments/:id/duplicate', async (ctx) => {
+      try {
+        ctx.send(202, await ops.duplicateEnvironment(envOr404(ctx), ctx.body));
+      } catch (err) {
+        if (err instanceof AllocationError) throw httpErr(err.status, err.message);
+        throw err;
+      }
+    }),
     route('POST', '/environments/:id/stop', async (ctx) => ctx.send(200, await manager.stop(envOr404(ctx)))),
     route('POST', '/environments/:id/start', async (ctx) => {
       try {

@@ -4,13 +4,14 @@
 
 import { spawn } from 'node:child_process';
 import { createWriteStream, mkdirSync } from 'node:fs';
-import { readFile, writeFile, rm, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, rm, mkdir, appendFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 
 import { allocate, AllocationError } from './allocator.js';
+import { rewriteCloneIdentity } from './clone.js';
 import * as docker from './docker.js';
 import * as gitauth from './gitauth.js';
-import { computeStatus, coreUp, publicView, TRANSIENT } from './status.js';
+import { computeStatus, coreUp, anyUp, publicView, TRANSIENT } from './status.js';
 import { composeProvision } from './provision.js';
 import { log, redact } from './log.js';
 
@@ -217,6 +218,131 @@ export class Manager {
       // right away (consistent with start()/_claimPipeline); avoids a stale ps
       // briefly overriding the real state on the read path.
       this.probeCache.delete(record.id);
+    }
+  }
+
+  // ---- duplicate ----------------------------------------------------------
+
+  // Clone an existing environment: allocate a fresh identity (name, compose
+  // project, ports), copy the source dir byte-for-byte (briefly stopping the
+  // source so the MariaDB datadir copy is consistent), rewrite the baked-in
+  // identity (clone.js), boot, and re-point absolute URLs in the copied DB at
+  // the new port. Agent sessions do NOT carry over (they're keyed by env id).
+  async duplicate(source, { name, prompt, model, agent } = {}) {
+    this._assertRunRoom(); // the clone boots at the end — count it now
+    if (this.jobs.has(source.id)) {
+      throw new AllocationError(`environment "${source.name}" is busy (${this.jobs.get(source.id)})`, 409);
+    }
+    if (source.pool) throw new AllocationError('cannot duplicate a warm-pool member', 400);
+    if (!['running', 'degraded', 'stopped'].includes(source.status)) {
+      throw new AllocationError(
+        `environment "${source.name}" is ${source.status} — only running or stopped environments can be duplicated`,
+        409,
+      );
+    }
+    const record = await allocate(this.registry, this.config, {
+      nameHint: name,
+      appPorts: (source.appPorts ?? []).map((p) => p.container),
+    });
+    if (source.preset) await this.registry.update(record.id, { preset: source.preset });
+    this.jobs.set(record.id, 'setting-up');
+    const initial = prompt ? { prompt, model, agent } : null;
+    this._duplicatePipeline(source, record, { initial }).catch((err) => log.error(`[${record.name}] duplicate crashed:`, err));
+    return this.registry.get(record.id);
+  }
+
+  async _duplicatePipeline(source, record, { initial = null } = {}) {
+    const { config, registry } = this;
+    const logLine = (msg) =>
+      appendFile(record.setupLogPath, `\n=== ${new Date().toISOString()} ${msg} ===\n`).catch(() => {});
+    // Owning a jobs entry shows 'duplicating' on the source and keeps the
+    // reconcile sweep from flipping its status while its containers are down.
+    this.jobs.set(source.id, 'duplicating');
+    let stoppedSource = false;
+    try {
+      mkdirSync(dirname(record.setupLogPath), { recursive: true });
+      await registry.update(record.id, { status: 'setting-up', setupStartedAt: new Date().toISOString() });
+
+      await this.buildSem.run(async () => {
+        // 1. Quiesce the source for a consistent copy (a live MariaDB datadir
+        //    copy can be torn), cp -a (ownership matters: db files are uid 999,
+        //    workspace files uid 1000), restart the source right away.
+        if (anyUp(await this._probe(source))) {
+          await logLine(`stopping ${source.name} for a consistent copy`);
+          await docker.npmRun(source, 'stop', { timeout: 180_000 });
+          stoppedSource = true;
+        }
+        await logLine(`copying ${source.dir} → ${record.dir}`);
+        await this._spawnLogged('cp', ['-a', source.dir, record.dir], {
+          logPath: record.setupLogPath,
+          timeout: 30 * 60 * 1000,
+        });
+        if (stoppedSource) {
+          stoppedSource = false;
+          await logLine(`restarting ${source.name}`);
+          // Source restart failure must not fail the clone — the copy is done.
+          await docker.npmRun(source, 'start', { timeout: 600_000 }).catch((err) => {
+            log.warn(`[${source.name}] restart after copy failed:`, err.message);
+          });
+        }
+
+        // 2. Re-stamp the copied identity (compose project, ports — see clone.js).
+        const newHostFor = new Map((record.appPorts ?? []).map((p) => [p.container, p.host]));
+        await logLine('rewriting identity (compose project, ports)');
+        await rewriteCloneIdentity(record.dir, {
+          oldName: source.name,
+          newName: record.name,
+          oldPort: source.port,
+          newPort: record.port,
+          portMap: (source.appPorts ?? [])
+            .filter((p) => newHostFor.has(p.container))
+            .map((p) => ({ container: p.container, oldHost: p.host, newHost: newHostFor.get(p.container) })),
+        });
+
+        // 3. Boot the clone + git auth (same as the warm-claim path).
+        this.jobs.set(record.id, 'configuring');
+        await registry.update(record.id, { status: 'configuring' });
+        await logLine('booting the copy');
+        await docker.npmRun(record, 'start', { timeout: 600_000 });
+        await gitauth.configure(record, config, this.settings.get().githubToken);
+      });
+
+      // 4. Re-point absolute URLs in the copied DB (post content, plugin
+      //    options) at the clone's port. wp search-replace is
+      //    serialization-aware, and the full //host:port needle can't
+      //    false-positive on unrelated ":<port>" text. Best-effort: the site
+      //    works without it (WP_HOME/WP_SITEURL derive from the request host) —
+      //    stale links back to the source at worst.
+      for (const host of new Set([config.publicHost, 'localhost'])) {
+        await logLine(`wp search-replace //${host}:${source.port} → //${host}:${record.port}`);
+        await docker
+          .exec(record, 'workspace', [
+            'wp', 'search-replace', `//${host}:${source.port}`, `//${host}:${record.port}`,
+            '--all-tables', '--report-changed-only',
+          ], { timeout: 300_000 })
+          .catch((err) => log.warn(`[${record.name}] search-replace (${host}) failed:`, err.message));
+      }
+      await docker.exec(record, 'workspace', ['wp', 'cache', 'flush'], { timeout: 60_000 }).catch(() => {});
+
+      await registry.update(record.id, { status: 'running', lastError: null, setupFinishedAt: new Date().toISOString() });
+      await logLine('duplicate complete');
+      if (initial?.prompt) {
+        try { await this.onEnvReady?.(registry.get(record.id), initial); }
+        catch (err) { log.warn(`[${record.name}] initial session failed:`, err.message); }
+      }
+    } catch (err) {
+      log.error(`[${record.name}] duplicate failed:`, err.message);
+      await registry.update(record.id, { status: 'failed', lastError: truncate(redactErr(err)) });
+      if (stoppedSource) {
+        await docker.npmRun(source, 'start', { timeout: 600_000 }).catch((e) =>
+          log.warn(`[${source.name}] restart after failed duplicate:`, e.message));
+      }
+    } finally {
+      this.jobs.delete(record.id);
+      this.jobs.delete(source.id);
+      // Both envs' cached ps entries predate the stop/copy/boot dance.
+      this.probeCache.delete(record.id);
+      this.probeCache.delete(source.id);
     }
   }
 

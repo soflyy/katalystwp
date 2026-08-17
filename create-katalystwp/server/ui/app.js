@@ -84,7 +84,7 @@ function StatusDot({ status }) {
   return html`<span class="dot ${status}" title=${status}></span>`;
 }
 
-const TRANSIENT_ENV = ['scaffolding', 'setting-up', 'configuring', 'destroying'];
+const TRANSIENT_ENV = ['scaffolding', 'setting-up', 'configuring', 'destroying', 'duplicating'];
 
 function EnvRow({ env, onAction }) {
   const building = TRANSIENT_ENV.includes(env.status);
@@ -111,6 +111,7 @@ function EnvRow({ env, onAction }) {
             ${up && html`<button class="lnk" onClick=${() => onAction('stop', env)}>stop</button>`}
             ${env.status === 'stopped' && html`<button class="lnk" onClick=${() => onAction('start', env)}>start</button>`}
             ${env.status === 'failed' && html`<button class="lnk" onClick=${() => onAction('start', env)}>retry</button>`}
+            ${(up || env.status === 'stopped') && html`<button class="lnk" title="Clone this environment (full data copy on a new port)" onClick=${() => onAction('duplicate', env)}>duplicate</button>`}
             <button class="lnk" onClick=${() => onAction('rename', env)}>rename</button>
             <button class="lnk" onClick=${() => onAction('ssh', env)} title="Copy a command to open a shell / interactive Claude on the box">ssh</button>
             <button class="lnk" onClick=${() => onAction('logs', env)}>logs</button>
@@ -1224,6 +1225,15 @@ function App() {
       if (action === 'session') return setNewSession({ preselect: env.id });
       if (action === 'start') await api(`/environments/${env.id}/start`, { method: 'POST' });
       if (action === 'stop') await api(`/environments/${env.id}/stop`, { method: 'POST' });
+      if (action === 'duplicate') {
+        // The source stops for a moment while the DB is copied, then restarts.
+        const name = prompt(
+          `Duplicate "${env.displayName || env.name}"?\n\nFull copy (database, files, plugins) on a new port. `
+            + `The source briefly stops during the copy, then restarts.\n\nName for the copy (blank = auto):`, '');
+        if (name === null) return;
+        const body = name.trim() ? { name: name.trim() } : {};
+        await api(`/environments/${env.id}/duplicate`, { method: 'POST', body: JSON.stringify(body) });
+      }
       if (action === 'delete') {
         if (!confirm(`Destroy environment "${env.displayName || env.name}"? This removes its containers and all its data.`)) return;
         await api(`/environments/${env.id}`, { method: 'DELETE' });

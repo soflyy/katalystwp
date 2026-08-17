@@ -241,6 +241,26 @@ export function buildOps(config, registry, manager, sessions, presets) {
     return { id: record.id, name: record.name, port: record.port, appPorts: record.appPorts ?? [], wpUrl: wpUrl(record), status: record.status, warm: false };
   };
 
+  // Duplicate an environment (manager.duplicate): full copy of the source's
+  // data on a fresh name + port. Async like create — the caller polls the COPY
+  // until `running`. Optional prompt/model/agent start a session in the copy
+  // once it's up, mirroring createEnvironment's fused flow.
+  const duplicateEnvironment = async (source, body = {}) => {
+    const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
+    const model = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : undefined;
+    const agent = AGENTS[body.agent] ? body.agent : undefined;
+    const record = await manager.duplicate(source, { name: body.name, prompt: prompt || undefined, model, agent });
+    return {
+      id: record.id,
+      name: record.name,
+      port: record.port,
+      appPorts: record.appPorts ?? [],
+      wpUrl: `http://${config.publicHost}:${record.port}`,
+      status: record.status,
+      duplicatedFrom: source.name,
+    };
+  };
+
   return {
     envByRef,
     sessionByRef,
@@ -251,5 +271,6 @@ export function buildOps(config, registry, manager, sessions, presets) {
     mintAdminLogin,
     readTranscript,
     createEnvironment,
+    duplicateEnvironment,
   };
 }

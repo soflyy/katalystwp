@@ -78,6 +78,7 @@ DEVBOX_API_TOKEN=secret GITHUB_TOKEN=… npm start
 | `GET` | `/environments/:id` | one env (by id or name) |
 | `GET` | `/environments/:id/logs?which=setup&tail=N` | setup log |
 | `POST` | `/environments/:id/admin-login` | mint a one-time passwordless wp-admin login URL |
+| `POST` | `/environments/:id/duplicate` | `{name?,prompt?,model?,agent?}` → 202; clone the env (full data copy, fresh name + port; source briefly stops during the copy) |
 | `POST` | `/environments/:id/stop` | stop containers |
 | `POST` | `/environments/:id/start` | bring containers back up + re-auth git |
 | `DELETE` | `/environments/:id` | stop + remove the dir; cascades to its sessions |

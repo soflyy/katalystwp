@@ -4,7 +4,9 @@
 //
 // "degraded" = some but not all core containers are up.
 
-export const TRANSIENT = new Set(['scaffolding', 'setting-up', 'configuring', 'destroying']);
+// 'duplicating' is shown on a SOURCE env while a copy of it is being taken
+// (manager.duplicate briefly stops it for a consistent DB copy, then restarts).
+export const TRANSIENT = new Set(['scaffolding', 'setting-up', 'configuring', 'destroying', 'duplicating']);
 
 // Services whose "running" state means the stack is up. Playwright is present
 // but not gated on (it's the heaviest and least essential to core operation).
