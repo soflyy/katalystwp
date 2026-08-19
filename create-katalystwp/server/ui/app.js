@@ -145,7 +145,7 @@ function SessionItem({ s, selectedId, onSelect, onDelete, onArchive, onRestore, 
     </div>`;
 }
 
-function Sidebar({ sessions, envs, selectedId, now, onSelect, onNewEnv, onEnvAction, onSettings, onHealth, onDeleteSession, onArchiveSession, onRestoreSession }) {
+function Sidebar({ sessions, envs, selectedId, now, onSelect, onNewEnv, onEnvAction, onSettings, onHealth, onCloseDrawer, onDeleteSession, onArchiveSession, onRestoreSession }) {
   const [expanded, setExpanded] = useState(() => new Set());
   // Which envs currently have their "Archived (N)" reveal expanded.
   const [archOpen, setArchOpen] = useState(() => new Set());
@@ -177,6 +177,7 @@ function Sidebar({ sessions, envs, selectedId, now, onSelect, onNewEnv, onEnvAct
         <div class="side-head-btns">
           <button class="btn small ghost" onClick=${onHealth} title="System health">📊</button>
           <button class="btn small ghost" onClick=${onSettings} title="Settings">⚙</button>
+          <button class="mobile-only btn small ghost" onClick=${onCloseDrawer} title="Close">✕</button>
         </div>
       </div>
       <div class="side-section grow">
@@ -252,7 +253,7 @@ function Bubble({ it }) {
   return html`<div class="raw"><pre>${clipText(it.text)}</pre></div>`;
 }
 
-function SessionView({ session, now, onChanged, onBack, onDelete, onArchive, onRestore }) {
+function SessionView({ session, now, onChanged, onMenu, onDelete, onArchive, onRestore }) {
   const [items, setItems] = useState([]);
   const [partial, setPartial] = useState('');
   const [loading, setLoading] = useState(true);
@@ -348,7 +349,7 @@ function SessionView({ session, now, onChanged, onBack, onDelete, onArchive, onR
     <section class="main">
       <header class="bar">
         <div class="bar-title">
-          <button class="back btn small ghost" onClick=${onBack} title="Back to list">‹</button>
+          <button class="mobile-only btn small ghost" onClick=${onMenu} title="Environments & sessions">☰</button>
           <${StatusDot} status=${session.status} />
           ${editing
             ? html`<input class="rename" value=${draft}
@@ -1120,6 +1121,10 @@ function App() {
   const [envs, setEnvs] = useState([]);
   const [presets, setPresets] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
+  // On phones the sidebar is an off-canvas drawer (see the mobile media query).
+  // It starts open there so first load shows the env/session list, not an
+  // empty pane; on desktop the class is inert (sidebar is always visible).
+  const [drawerOpen, setDrawerOpen] = useState(() => window.matchMedia('(max-width: 760px)').matches);
   const [newSession, setNewSession] = useState(null); // null | { preselect? }
   const [showNewEnv, setShowNewEnv] = useState(false);
   const [logEnvId, setLogEnvId] = useState(null);
@@ -1243,14 +1248,18 @@ function App() {
   };
 
   return html`
-    <div class=${`layout ${selected ? 'has-selection' : ''}`}>
+    <div class=${`layout ${drawerOpen ? 'drawer-open' : ''}`}>
       <${Sidebar} sessions=${sessions} envs=${envs} selectedId=${selectedId} now=${now}
-        onSelect=${setSelectedId} onNewEnv=${() => setShowNewEnv(true)}
+        onSelect=${(id) => { setSelectedId(id); setDrawerOpen(false); }} onNewEnv=${() => setShowNewEnv(true)}
         onEnvAction=${envAction} onSettings=${() => setShowSettings(true)} onHealth=${() => setShowHealth(true)}
+        onCloseDrawer=${() => setDrawerOpen(false)}
         onDeleteSession=${deleteSession} onArchiveSession=${archiveSession} onRestoreSession=${restoreSession} />
+      <div class="scrim" onClick=${() => setDrawerOpen(false)}></div>
       ${selected
-        ? html`<${SessionView} session=${selected} key=${selected.id} now=${now} onChanged=${refresh} onBack=${() => setSelectedId(null)} onDelete=${() => deleteSession(selected)} onArchive=${() => archiveSession(selected)} onRestore=${() => restoreSession(selected)} />`
-        : html`<section class="main empty"><div class="muted">
+        ? html`<${SessionView} session=${selected} key=${selected.id} now=${now} onChanged=${refresh} onMenu=${() => setDrawerOpen(true)} onDelete=${() => deleteSession(selected)} onArchive=${() => archiveSession(selected)} onRestore=${() => restoreSession(selected)} />`
+        : html`<section class="main empty">
+            <button class="mobile-only menu-btn btn small ghost" onClick=${() => setDrawerOpen(true)} title="Environments & sessions">☰</button>
+            <div class="muted">
             ${envs.length === 0
               ? html`No environments yet. <button class="btn" onClick=${() => setShowNewEnv(true)}>Create an environment</button> to begin.`
               : html`Select a session, or <button class="btn" onClick=${() => setNewSession({})}>start a new one</button>.`}

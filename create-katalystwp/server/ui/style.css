@@ -6,7 +6,8 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
   font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-#root, .layout { height: 100vh; }
+/* dvh keeps the composer above mobile browser chrome; vh is the fallback */
+#root, .layout { height: 100vh; height: 100dvh; }
 .layout { display: grid; grid-template-columns: 420px 1fr; }
 .muted { color: var(--muted); }
 .pad { padding: 12px; }
@@ -83,7 +84,8 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; font: 12.5px/1.5
 .bar-title { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .bar-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bar-meta { font-size: 12px; }
-.back { display: none; } /* shown only on narrow screens (see media query) */
+.mobile-only { display: none; } /* shown only on narrow screens (see media query) */
+.scrim { display: none; } /* drawer backdrop; only exists visually on mobile */
 .ssh { padding: 6px 16px; border-bottom: 1px solid var(--line); font-size: 12px; cursor: pointer; }
 .ssh:hover { background: var(--panel2); }
 .transcript { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
@@ -128,7 +130,8 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; font: 12.5px/1.5
 .dot.stopped { background: var(--grey); }
 
 /* modal */
-.modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; z-index: 10; }
+/* z-index sits above the mobile sidebar drawer (20) so modals opened from it are usable */
+.modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; z-index: 30; }
 .modal { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; width: 460px; max-width: 92vw; }
 .modal h3 { margin: 0 0 12px; }
 .modal label { display: block; margin: 12px 0 4px; font-size: 13px; color: var(--muted); }
@@ -212,17 +215,19 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; font: 12.5px/1.5
 
 /* ---- mobile / narrow screens -------------------------------------------- */
 @media (max-width: 760px) {
-  /* one pane visible at a time, each filling the viewport so its inner list /
-     transcript scrolls (a single-column grid would size panes to content). */
+  /* The main pane fills the viewport; the sidebar becomes an off-canvas
+     drawer over it (app.js toggles .drawer-open — hamburger opens, scrim /
+     ✕ / picking a session closes). The session view stays mounted while the
+     drawer is open, so its live stream keeps flowing. */
   .layout { display: block; }
-  .sidebar, .main { height: 100vh; }
-  .sidebar { border-right: 0; }
-  /* Single-column: the sidebar IS the list; selecting a session shows it
-     full-width with a back button. */
-  .main { display: none; }
-  .layout.has-selection .sidebar { display: none; }
-  .layout.has-selection .main { display: flex; }
-  .back { display: inline-block; }
+  .main { height: 100vh; height: 100dvh; }
+  .sidebar { position: fixed; top: 0; bottom: 0; left: 0; width: min(85vw, 340px);
+    height: 100vh; height: 100dvh; z-index: 20;
+    transform: translateX(-105%); transition: transform .22s ease; }
+  .layout.drawer-open .sidebar { transform: translateX(0); box-shadow: 14px 0 40px rgba(0,0,0,.55); }
+  .layout.drawer-open .scrim { display: block; position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 19; }
+  .mobile-only { display: inline-block; }
+  .main.empty .menu-btn { position: absolute; top: 12px; left: 12px; }
 
   .bar { flex-wrap: wrap; gap: 4px 12px; }
   .bar-meta { width: 100%; }
@@ -230,7 +235,9 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; font: 12.5px/1.5
   .bubble, .tool, .stderr { max-width: 100%; }
   .transcript { padding: 12px; }
   .composer { padding: 10px 12px; }
-  .modal { width: 100%; }
+  /* ≥16px inputs stop iOS Safari from zooming the page on focus */
+  .composer textarea, .modal input, .modal select, .modal textarea { font-size: 16px; }
+  .modal { width: 100%; max-height: 92vh; max-height: 92dvh; overflow-y: auto; }
   /* roomier tap targets for the env action links */
   .env-actions { gap: 16px; }
   .lnk { padding: 4px 0; }
