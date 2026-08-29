@@ -143,13 +143,16 @@ async function recordEnvironment(env) {
   await saveState(state);
 }
 
-// Can we listen on this port? (Docker-published ports bind 0.0.0.0, so they —
-// and any other host listener — make this return false.)
-function portFree(port) {
+// Can we listen on this port? Checks the interface the scaffolded stack will
+// actually publish on: 0.0.0.0 by default (docker-published ports bind
+// wildcard, so any host listener makes this false), or the --bind interface —
+// with --bind=127.0.0.1 behind a reverse proxy, the proxy's own listener on
+// the PUBLIC address of this port must not count as a conflict.
+function portFree(port, host = '0.0.0.0') {
   return new Promise((res) => {
     const srv = createServer();
     srv.once('error', () => res(false));
-    srv.listen({ port, host: '0.0.0.0', exclusive: true }, () => srv.close(() => res(true)));
+    srv.listen({ port, host, exclusive: true }, () => srv.close(() => res(true)));
   });
 }
 
@@ -167,10 +170,10 @@ function portInUse(port) {
 
 // First port >= `start` that is free on the host AND not claimed by a
 // registered environment (which may just be stopped right now).
-async function findFreePort(start, claimed) {
+async function findFreePort(start, claimed, host = '0.0.0.0') {
   for (let p = start; p < start + 1000; p++) {
     if (claimed.has(p)) continue;
-    if (await portFree(p)) return p;
+    if (await portFree(p, host)) return p;
   }
   return start; // pathological — let Docker surface the error
 }
@@ -788,18 +791,20 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
   // environment (which may just be stopped right now).
   const state = await loadState();
   const claimed = new Set(state.environments.map((e) => Number(e.port)));
+  // Check the interface the stack will publish on (see portFree).
+  const bindIface = args.bindHost ? args.bindHost.replace(/:$/, '') : '0.0.0.0';
   let port;
   if (args.portExplicit) {
     port = String(args.port);
     const n = parseInt(port, 10);
-    if (!(await portFree(n))) {
+    if (!(await portFree(n, bindIface))) {
       const holder = state.environments.find((e) => Number(e.port) === n);
       console.error(`\n✖ Port ${n} is already in use${holder ? ` by your "${holder.name}" environment (${holder.dir})` : ''}.`);
-      console.error(`  Free alternative: --port=${await findFreePort(n + 1, claimed)}${holder ? `, or stop that environment: cd ${holder.dir} && npm run stop` : ''}\n`);
+      console.error(`  Free alternative: --port=${await findFreePort(n + 1, claimed, bindIface)}${holder ? `, or stop that environment: cd ${holder.dir} && npm run stop` : ''}\n`);
       process.exit(1);
     }
   } else {
-    port = String(await findFreePort(parseInt(args.port, 10) || 8080, claimed));
+    port = String(await findFreePort(parseInt(args.port, 10) || 8080, claimed, bindIface));
   }
 
   // Only two questions: directory and agents. Port is auto-picked (visible in
