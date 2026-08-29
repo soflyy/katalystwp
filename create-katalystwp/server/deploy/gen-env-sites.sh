@@ -15,6 +15,13 @@
 # on the same ports (and with the server allocator's loopback port probe).
 # Bound to the public IP only, Caddy and docker share each port cleanly.
 #
+# No `tls` directive here ON PURPOSE: the control-plane site block
+# (Caddyfile.example) already declares the shortlived-issuer automation policy
+# for this same IP, and Caddy rejects a second policy for one hostname
+# ("appears in more than one automation policy"). The env sites share the
+# control plane's certificate. This import therefore REQUIRES the control-plane
+# block in the same Caddyfile.
+#
 # Keep the range in sync with the server's WP_PORT_RANGE (env sites AND their
 # app ports allocate from it). Regenerate + reload after widening the range.
 set -euo pipefail
@@ -36,11 +43,6 @@ echo "# Katalyst env WordPress sites: TLS for ports $LO-$HI, proxied port-for-po
 printf '%s {\n' "$(seq "$LO" "$HI" | sed "s/^/$IP:/" | paste -sd, - | sed 's/,/, /g')"
 cat <<EOF
 	bind $IP
-	tls {
-		issuer acme {
-			profile shortlived
-		}
-	}
 	encode zstd gzip
 	reverse_proxy 127.0.0.1:{http.request.local.port}
 }
