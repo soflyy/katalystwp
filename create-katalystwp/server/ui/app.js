@@ -27,10 +27,15 @@ const streamUrl = (id) => {
   const t = token.get();
   return `/sessions/${id}/stream${t ? `?access_token=${encodeURIComponent(t)}` : ''}`;
 };
-// Env sites (WP + app ports) are plain HTTP even when the control plane is
-// served over TLS — always link them http:// until they're proxied too
-// (TLS phase 2, issue #73). location.protocol would mint dead https links.
-const envSiteUrl = (port, query = '') => `http://${location.hostname}:${port}/${query}`;
+// Links to an env's site (WP + app ports): hostname rebased on how THIS
+// browser reached the UI (works from a phone/laptop even when the server's
+// configured host differs), scheme taken from the env's own wpUrl — per env,
+// because envs from before an https switch stay plain http until migrated
+// (TLS phase 2, issue #73). location.protocol would mint dead links for them.
+const envSiteUrl = (env, port, query = '') => {
+  const scheme = String(env.wpUrl || '').startsWith('https:') ? 'https' : 'http';
+  return `${scheme}://${location.hostname}:${port}/${query}`;
+};
 
 // ---- stream-json → transcript items --------------------------------------
 function reduce(items, partialRef, evt) {
@@ -92,14 +97,14 @@ function EnvRow({ env, onAction }) {
   // Link to the WP site on the SAME host the UI was loaded from (not the
   // server's localhost wpUrl) — so it works from a phone/laptop hitting the
   // server's IP, and still works from inside the devbox via localhost.
-  const wpUrl = envSiteUrl(env.port);
+  const wpUrl = envSiteUrl(env, env.port);
   return html`
     <div class="env">
       <div class="env-top">
         <${StatusDot} status=${env.status} /> <span class="env-name" title=${env.displayName ? `${env.displayName} · ${env.name}` : env.name}>${env.displayName || env.name}</span>
         ${env.preset && html`<span class="badge" title="provisioned from preset">${env.preset}</span>`}
         <a class="env-port" href=${wpUrl} target="_blank" rel="noreferrer" title="Open the site front end" onClick=${(e) => e.stopPropagation()}>:${env.port}</a>
-        ${(env.appPorts || []).map((p) => html`<a class="env-port" href=${envSiteUrl(p.host)} target="_blank" rel="noreferrer" title=${`App port → container :${p.container}`} onClick=${(e) => e.stopPropagation()}>:${p.host}<span class="muted small">→${p.container}</span></a>`)}
+        ${(env.appPorts || []).map((p) => html`<a class="env-port" href=${envSiteUrl(env, p.host)} target="_blank" rel="noreferrer" title=${`App port → container :${p.container}`} onClick=${(e) => e.stopPropagation()}>:${p.host}<span class="muted small">→${p.container}</span></a>`)}
         ${up && html`<button class="env-admin lnk" title="One-click passwordless wp-admin login" onClick=${(e) => { e.stopPropagation(); onAction('admin-login', env); }}>admin ↗</button>`}
       </div>
       <div class="env-actions">
@@ -1213,7 +1218,7 @@ function App() {
       try {
         const { loginUrl } = await api(`/environments/${env.id}/admin-login`, { method: 'POST' });
         const u = new URL(loginUrl);
-        const dest = envSiteUrl(env.port, `?${u.searchParams.toString()}`);
+        const dest = envSiteUrl(env, env.port, `?${u.searchParams.toString()}`);
         if (w) w.location = dest; else window.open(dest, '_blank', 'noopener');
       } catch (e) { if (w) w.close(); alert(`Admin login failed: ${e.message}`); }
       return;

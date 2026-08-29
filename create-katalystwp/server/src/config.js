@@ -60,6 +60,13 @@ export function loadConfig(env = process.env) {
     // scaffolder as --public-host so setup scripts can build browser-valid URLs
     // (SANDBOX_PUBLIC_HOST). On a remote box set the public IP or a DNS name.
     publicHost: env.DEVBOX_PUBLIC_HOST || 'localhost',
+    // Scheme browsers use to reach the ENV SITES (wpUrl, admin-login links).
+    // 'https' means a TLS-terminating proxy (e.g. Caddy, see deploy/) owns the
+    // public side of the whole WP_PORT_RANGE — new envs are then scaffolded
+    // with their ports bound to loopback (--bind=127.0.0.1) so only the proxy
+    // reaches them. Recorded per env at allocation (record.scheme), so envs
+    // created before a switch keep working plain-http URLs until migrated.
+    publicScheme: env.DEVBOX_PUBLIC_SCHEME || 'http',
 
     // Allocation / limits
     portRange: parseRange(env.WP_PORT_RANGE, '9000-9999'),
@@ -116,6 +123,10 @@ export function loadConfig(env = process.env) {
   // Exposing this API to the network means exposing root-equivalent control of
   // the Docker host. Refuse to bind a non-loopback address without a bearer
   // token — otherwise anyone who can reach the port can create/destroy envs.
+  if (!['http', 'https'].includes(config.publicScheme)) {
+    throw new Error(`Invalid DEVBOX_PUBLIC_SCHEME "${config.publicScheme}" — must be http or https`);
+  }
+
   const loopback = new Set(['127.0.0.1', '::1', 'localhost']);
   if (!loopback.has(config.bind) && !config.apiToken) {
     throw new Error(

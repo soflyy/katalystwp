@@ -32,6 +32,7 @@ The server is a **thin orchestrator over the scaffolded project's own scripts**:
 | `DEVBOX_API_TOKEN` | — | if set, all routes require `Authorization: Bearer <token>` |
 | `WP_PORT_RANGE` | `9000-9999` | host ports to allocate from (the env's WP port **and** its app ports) |
 | `DEVBOX_PUBLIC_HOST` | `localhost` | hostname/IP browsers use to reach this Docker host (your server's public IP / DNS name) — used in every returned URL (`wpUrl`, admin-login `loginUrl`) and passed to the scaffolder as `--public-host` so setup scripts can build browser-valid URLs |
+| `DEVBOX_PUBLIC_SCHEME` | `http` | `https` when a TLS proxy fronts the env port range (see **HTTPS on a bare IP**) — new envs then bind published ports to loopback and get `https://` URLs; recorded per env, so pre-switch envs keep http |
 | `SANDBOX_SETUP_ENV_*` | — | setup secrets forwarded to every env's setup script with the prefix stripped (see above) |
 | `MAX_ENVIRONMENTS` | `25` | hard cap on environments |
 | `BUILD_CONCURRENCY` | `2` | simultaneous `docker build`/setup runs |
@@ -143,9 +144,18 @@ renews them. Bind the server to loopback (`DEVBOX_BIND=127.0.0.1`,
 reachable for ACME validation. SSE session streams work through the proxy
 unchanged.
 
-This covers the control plane (API/MCP/UI/token). The per-env WordPress sites
-on their own ports remain plain HTTP until they're proxied too (requires
-compose port rebinding + WP siteurl scheme changes — tracked separately).
+This covers the control plane (API/MCP/UI/token). To serve the **per-env
+WordPress sites** over HTTPS too, the same IP certificate applies (it's valid
+for any port): generate one Caddy site block for the whole env port range with
+[`deploy/gen-env-sites.sh`](deploy/gen-env-sites.sh) (TLS on every range port,
+proxied port-for-port to loopback) and set `DEVBOX_PUBLIC_SCHEME=https`. New
+envs are then scaffolded with published ports bound to `127.0.0.1` (Caddy owns
+the public side), a forwarded-proto shim in wp-config, and `https://` wpUrl /
+admin-login links. The scheme is recorded **per env** at creation, so envs
+built before the switch keep their working plain-http URLs (and their public
+`0.0.0.0` port binds) until migrated — pick a proxy range slice that doesn't
+overlap their ports. Warm pools bake the scaffold at build time: rebuild them
+after switching.
 
 ## Web UI
 

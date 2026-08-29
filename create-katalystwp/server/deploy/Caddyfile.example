@@ -17,13 +17,28 @@
 #   claude mcp add --transport http katalyst https://<your-ip>:4000/mcp \
 #     --header "Authorization: Bearer $DEVBOX_API_TOKEN"
 #
-# Note: this secures the CONTROL PLANE (API token, MCP, session streams, UI).
-# The per-env WordPress sites on their own ports remain plain HTTP until they
-# are proxied too (bigger change: compose port rebinding + WP siteurl scheme).
+# This secures the CONTROL PLANE (API token, MCP, session streams, UI).
+#
+# To ALSO serve the per-env WordPress sites over HTTPS (TLS phase 2): the same
+# IP certificate is valid for any port, so Caddy can terminate TLS for the
+# whole env port range and proxy port-for-port to loopback. Three steps:
+#
+#   1. gen-env-sites.sh <your-ip> <lo> <hi> > /etc/caddy/env-sites.caddy
+#      (match the server's WP_PORT_RANGE), and uncomment the import below.
+#   2. In the server env: DEVBOX_PUBLIC_SCHEME=https — new envs then bind
+#      their published ports to 127.0.0.1 (Caddy owns the public side) and
+#      get https wpUrl / admin-login links.
+#   3. Rebuild any warm pools (they bake the scaffold at build time).
+#
+# Envs created BEFORE the switch keep publishing their ports on 0.0.0.0 with
+# http URLs (their record says so) — pick a range slice for the proxy that
+# doesn't overlap ports docker already binds publicly, or migrate those envs.
 
 {
 	email you@example.com
 }
+
+# import /etc/caddy/env-sites.caddy
 
 <your-ip>:4000 {
 	tls {

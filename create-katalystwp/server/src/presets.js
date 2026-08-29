@@ -78,7 +78,7 @@ const FUTURELAYER_SETUP_SCRIPT = `${BREAKDANCE_SETUP_SCRIPT}
 # ---- FutureLayer app (app-dot-futurelayer) ----
 wp option update futurelayer_app_url_override_backend "http://workspace:3000"
 if [ -n "\${SANDBOX_APP_PORT_3000:-}" ]; then
-  wp option update futurelayer_app_url_override_browser "http://\${SANDBOX_PUBLIC_HOST:-localhost}:\${SANDBOX_APP_PORT_3000}"
+  wp option update futurelayer_app_url_override_browser "\${SANDBOX_PUBLIC_SCHEME:-http}://\${SANDBOX_PUBLIC_HOST:-localhost}:\${SANDBOX_APP_PORT_3000}"
 fi
 
 if [ -n "\${LOCAL_DEV_APP_DOT_FUTURELAYER_DOT_ENV_FILE_CONTENTS_BASE64:-}" ]; then
@@ -95,7 +95,7 @@ MU_SRC=/home/node/breakdance/.devcontainer/mu-plugin-canonical-upload-urls.php
 if [ -f "\$MU_SRC" ]; then
   mkdir -p /home/node/wp/wp-content/mu-plugins
   cp -f "\$MU_SRC" /home/node/wp/wp-content/mu-plugins/canonical-upload-urls.php
-  wp config set FUTURELAYER_DEV_CANONICAL_URL "http://\${SANDBOX_PUBLIC_HOST:-localhost}:\${SANDBOX_WP_PORT:-80}" --type=constant
+  wp config set FUTURELAYER_DEV_CANONICAL_URL "\${SANDBOX_PUBLIC_SCHEME:-http}://\${SANDBOX_PUBLIC_HOST:-localhost}:\${SANDBOX_WP_PORT:-80}" --type=constant
 fi
 `;
 
