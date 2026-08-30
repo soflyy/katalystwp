@@ -53,7 +53,9 @@ preset). **Poll `GET /environments/<name>` until `status` is `running`.**
 curl -s -H "Authorization: Bearer $TOK" -X POST "$BASE/environments" \
   -d '{"name":"my-devbox"}'
 # → {"id":"env_…","name":"my-devbox","port":9000,"wpUrl":"http://<host>:9000","status":"scaffolding"}
-#   (wpUrl and admin-login URLs use the server's DEVBOX_PUBLIC_HOST — directly openable)
+#   (wpUrl and admin-login URLs use the server's DEVBOX_PUBLIC_HOST — directly
+#    openable; they're https:// when the operator has TLS in front of the env
+#    ports. Always use the URLs as returned — don't assume a scheme.)
 
 # 2. Poll until running (or failed). Repeat every ~10s.
 curl -s -H "Authorization: Bearer $TOK" "$BASE/environments/my-devbox"

@@ -51,12 +51,16 @@ done
 # Tell the setup script where this environment lives, so it can build URLs that
 # are valid outside the Docker network (dev-app browser URLs, canonical hosts):
 #   SANDBOX_PUBLIC_HOST          — PUBLIC_HOST from .env (--public-host)
+#   SANDBOX_PUBLIC_SCHEME        — PUBLIC_SCHEME from .env (--public-scheme);
+#                                  http, or https behind a TLS proxy
 #   SANDBOX_WP_PORT              — the site's published host port
 #   SANDBOX_APP_PORT_<container> — host port for each --app-ports entry
 # All are exported by name (-e NAME), so values stay off the command line.
 export SANDBOX_PUBLIC_HOST="$(grep -E '^PUBLIC_HOST=' .env | head -1 | cut -d= -f2-)"
+SANDBOX_PUBLIC_SCHEME="$(grep -E '^PUBLIC_SCHEME=' .env | head -1 | cut -d= -f2-)"
+export SANDBOX_PUBLIC_SCHEME="${SANDBOX_PUBLIC_SCHEME:-http}"
 export SANDBOX_WP_PORT="$(grep -E '^WP_PORT=' .env | head -1 | cut -d= -f2-)"
-exec_args+=(-e SANDBOX_PUBLIC_HOST -e SANDBOX_WP_PORT)
+exec_args+=(-e SANDBOX_PUBLIC_HOST -e SANDBOX_PUBLIC_SCHEME -e SANDBOX_WP_PORT)
 while IFS= read -r pair; do
   [ -n "$pair" ] || continue
   export "SANDBOX_APP_PORT_${pair%%=*}=${pair#*=}"

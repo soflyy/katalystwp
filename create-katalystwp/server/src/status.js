@@ -58,11 +58,13 @@ export function publicView(record, { status, publicHost }) {
     // Host-published dev-server ports ({ host, container }) — the UI links them
     // like `port`, rebased on the browser's hostname.
     appPorts: record.appPorts ?? [],
-    // Built from DEVBOX_PUBLIC_HOST at view time (not the stored record, which
+    // Host from DEVBOX_PUBLIC_HOST at view time (not the stored record, which
     // predates any host config change) so remote clients get a directly
-    // openable URL, not http://localhost:<port> (issue #74). Plain http until
-    // env sites are proxied too (TLS phase 2, issue #73).
-    wpUrl: `http://${publicHost || 'localhost'}:${record.port}`,
+    // openable URL, not http://localhost:<port> (issue #74). Scheme from the
+    // RECORD: it reflects how this env was scaffolded (loopback-bound behind
+    // the TLS proxy, or plain http) — envs from before the https switch keep
+    // http URLs until migrated (issue #73).
+    wpUrl: `${record.scheme === 'https' ? 'https' : 'http'}://${publicHost || 'localhost'}:${record.port}`,
     status,
     preset: record.preset || null,
     createdAt: record.createdAt,

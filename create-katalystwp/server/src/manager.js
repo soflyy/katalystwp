@@ -170,6 +170,10 @@ export class Manager {
         // the scaffolder's default is Claude-only.
         '--agents=all',
         `--public-host=${config.publicHost}`,
+        // https env: the TLS proxy owns the public side of the port range —
+        // scaffold the published ports loopback-only and tell setup scripts
+        // (SANDBOX_PUBLIC_SCHEME) to build https URLs.
+        ...(record.scheme === 'https' ? ['--bind=127.0.0.1', '--public-scheme=https'] : []),
         ...(record.appPorts?.length ? [`--app-ports=${record.appPorts.map((p) => `${p.host}:${p.container}`).join(',')}`] : []),
         ...(provisionPlan ? provisionPlan.args : []),
       ];
@@ -243,6 +247,9 @@ export class Manager {
     const record = await allocate(this.registry, this.config, {
       nameHint: name,
       appPorts: (source.appPorts ?? []).map((p) => p.container),
+      // The copy is the source's dir verbatim (same compose bind, same shim),
+      // so it serves whatever scheme the source did — not the current config.
+      scheme: source.scheme || 'http',
     });
     if (source.preset) await this.registry.update(record.id, { preset: source.preset });
     this.jobs.set(record.id, 'setting-up');

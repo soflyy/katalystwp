@@ -44,7 +44,11 @@ export async function rewriteCloneIdentity(dir, { oldName, newName, oldPort, new
       throw new Error('docker-compose.yml: compose project name line not found — refusing to boot a copy that would clobber the source project');
     }
     for (const { container, oldHost, newHost } of portMap) {
+      // Two vintages of app-port lines: bare `- "9101:3000"` and bind-aware
+      // `- "${WP_BIND:-}9101:3000"` (https-era template). Both anchors keep a
+      // bare number from matching inside an unrelated longer port.
       out = out.replaceAll(`"${oldHost}:${container}"`, `"${newHost}:${container}"`);
+      out = out.replaceAll(`:-}${oldHost}:${container}"`, `:-}${newHost}:${container}"`);
     }
     return out;
   }, { required: true });

@@ -143,13 +143,16 @@ async function recordEnvironment(env) {
   await saveState(state);
 }
 
-// Can we listen on this port? (Docker-published ports bind 0.0.0.0, so they —
-// and any other host listener — make this return false.)
-function portFree(port) {
+// Can we listen on this port? Checks the interface the scaffolded stack will
+// actually publish on: 0.0.0.0 by default (docker-published ports bind
+// wildcard, so any host listener makes this false), or the --bind interface —
+// with --bind=127.0.0.1 behind a reverse proxy, the proxy's own listener on
+// the PUBLIC address of this port must not count as a conflict.
+function portFree(port, host = '0.0.0.0') {
   return new Promise((res) => {
     const srv = createServer();
     srv.once('error', () => res(false));
-    srv.listen({ port, host: '0.0.0.0', exclusive: true }, () => srv.close(() => res(true)));
+    srv.listen({ port, host, exclusive: true }, () => srv.close(() => res(true)));
   });
 }
 
@@ -167,10 +170,10 @@ function portInUse(port) {
 
 // First port >= `start` that is free on the host AND not claimed by a
 // registered environment (which may just be stopped right now).
-async function findFreePort(start, claimed) {
+async function findFreePort(start, claimed, host = '0.0.0.0') {
   for (let p = start; p < start + 1000; p++) {
     if (claimed.has(p)) continue;
-    if (await portFree(p)) return p;
+    if (await portFree(p, host)) return p;
   }
   return start; // pathological — let Docker surface the error
 }
@@ -305,6 +308,8 @@ async function updateProject({ yes = false } = {}) {
     agentNpmPkgs: agents.map((k) => AGENTS[k].pkg).filter(Boolean).map((p) => p + ' ').join(''),
     port: env.WP_PORT || '8080',
     publicHost: env.PUBLIC_HOST || 'localhost',
+    publicScheme: env.PUBLIC_SCHEME || 'http',
+    wpBind: env.WP_BIND || '',
     appPortsBlock: renderAppPortsBlock(appPorts),
     wpAdminUser: env.WP_ADMIN_USER || 'admin',
     wpAdminPassword: env.WP_ADMIN_PASSWORD || 'password',
@@ -386,7 +391,7 @@ function applyAgentSections(content, agents) {
 }
 
 function parseArgs(argv) {
-  const out = { dir: null, port: '8080', portExplicit: false, setup: true, setupScript: null, defines: null, activate: [], devScript: null, devCommand: null, appPorts: [], publicHost: 'localhost', agentsRaw: null, pluginsRaw: null, yes: false };
+  const out = { dir: null, port: '8080', portExplicit: false, setup: true, setupScript: null, defines: null, activate: [], devScript: null, devCommand: null, appPorts: [], publicHost: 'localhost', publicScheme: 'http', bindHost: '', agentsRaw: null, pluginsRaw: null, yes: false };
   for (const a of argv) {
     if (a.startsWith('--port=')) { out.port = a.slice('--port='.length); out.portExplicit = true; }
     else if (a.startsWith('--agents=')) out.agentsRaw = a.slice('--agents='.length);
@@ -399,6 +404,11 @@ function parseArgs(argv) {
     else if (a.startsWith('--defines=')) out.defines = a.slice('--defines='.length);
     else if (a.startsWith('--app-ports=')) out.appPorts = parseAppPorts(a.slice('--app-ports='.length));
     else if (a.startsWith('--public-host=')) out.publicHost = a.slice('--public-host='.length).trim() || 'localhost';
+    else if (a.startsWith('--public-scheme=')) {
+      const s = a.slice('--public-scheme='.length).trim();
+      if (s !== 'http' && s !== 'https') throw new Error(`--public-scheme must be http or https, got "${s}"`);
+      out.publicScheme = s;
+    } else if (a.startsWith('--bind=')) out.bindHost = a.slice('--bind='.length).trim();
     else if (a.startsWith('--activate=')) {
       out.activate = a.slice('--activate='.length).split(',').map((s) => s.trim()).filter(Boolean);
     } else if (a === '--scaffold-only') out.setup = false;
@@ -457,9 +467,10 @@ function renderAppPortsBlock(appPorts) {
     '    # container port (started here or by the dev script — the dev container',
     '    # shares this network namespace) are reachable on the host port. Published',
     '    # ports bind 0.0.0.0 and BYPASS ufw-style host firewalls — on an',
-    '    # internet-facing host, restrict them upstream (cloud firewall/VPN).',
+    '    # internet-facing host, restrict them upstream (cloud firewall/VPN),',
+    '    # or set WP_BIND=127.0.0.1: in .env to bind loopback only.',
     '    ports:',
-    ...appPorts.map((p) => `      - "${p.host}:${p.container}"`),
+    ...appPorts.map((p) => `      - "\${WP_BIND:-}${p.host}:${p.container}"`),
   ].join('\n');
 }
 
@@ -526,6 +537,15 @@ Options:
   --public-host=HOST    Hostname/IP browsers use to reach this Docker host
                         (default: localhost). Written to .env as PUBLIC_HOST and
                         exposed to setup scripts as SANDBOX_PUBLIC_HOST.
+  --public-scheme=SCHEME
+                        http (default) or https — the scheme browsers use to
+                        reach the site (https when a TLS proxy fronts the
+                        published ports). Written to .env as PUBLIC_SCHEME and
+                        exposed to setup scripts as SANDBOX_PUBLIC_SCHEME.
+  --bind=IP             Bind published ports (WP + app ports) to this host
+                        interface only, e.g. --bind=127.0.0.1 to keep them off
+                        the network when a reverse proxy fronts them. Default:
+                        all interfaces. Written to .env as WP_BIND=IP:.
   --scaffold-only       Only write files; skip the automatic \`npm run setup\`
 `);
 }
@@ -632,6 +652,8 @@ async function copyTemplates(srcDir, destDir, vars, skip = new Set()) {
         .replaceAll('__PROJECT_NAME__', vars.projectName)
         .replaceAll('__WP_PORT__', vars.port)
         .replaceAll('__PUBLIC_HOST__', vars.publicHost)
+        .replaceAll('__PUBLIC_SCHEME__', vars.publicScheme ?? 'http')
+        .replaceAll('__WP_BIND__', vars.wpBind ?? '')
         .replaceAll('__APP_PORTS__', vars.appPortsBlock)
         .replaceAll('__AGENT_NPM_PKGS__', vars.agentNpmPkgs)
         .replaceAll('__KATALYST_VERSION__', ENGINE_VERSION)
@@ -769,18 +791,20 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
   // environment (which may just be stopped right now).
   const state = await loadState();
   const claimed = new Set(state.environments.map((e) => Number(e.port)));
+  // Check the interface the stack will publish on (see portFree).
+  const bindIface = args.bindHost ? args.bindHost.replace(/:$/, '') : '0.0.0.0';
   let port;
   if (args.portExplicit) {
     port = String(args.port);
     const n = parseInt(port, 10);
-    if (!(await portFree(n))) {
+    if (!(await portFree(n, bindIface))) {
       const holder = state.environments.find((e) => Number(e.port) === n);
       console.error(`\n✖ Port ${n} is already in use${holder ? ` by your "${holder.name}" environment (${holder.dir})` : ''}.`);
-      console.error(`  Free alternative: --port=${await findFreePort(n + 1, claimed)}${holder ? `, or stop that environment: cd ${holder.dir} && npm run stop` : ''}\n`);
+      console.error(`  Free alternative: --port=${await findFreePort(n + 1, claimed, bindIface)}${holder ? `, or stop that environment: cd ${holder.dir} && npm run stop` : ''}\n`);
       process.exit(1);
     }
   } else {
-    port = String(await findFreePort(parseInt(args.port, 10) || 8080, claimed));
+    port = String(await findFreePort(parseInt(args.port, 10) || 8080, claimed, bindIface));
   }
 
   // Only two questions: directory and agents. Port is auto-picked (visible in
@@ -841,6 +865,10 @@ export async function create({ preset = {}, argv = process.argv.slice(2) } = {})
     agentNpmPkgs: agents.map((k) => AGENTS[k].pkg).filter(Boolean).map((p) => p + ' ').join(''),
     port: String(args.port),
     publicHost: args.publicHost,
+    publicScheme: args.publicScheme,
+    // Interface prefix for published ports, colon included (e.g. "127.0.0.1:").
+    // Empty = all interfaces (docker default) — the local-dev behavior.
+    wpBind: args.bindHost ? `${args.bindHost.replace(/:$/, '')}:` : '',
     appPortsBlock: renderAppPortsBlock(appPorts),
     wpAdminUser: adminUser,
     wpAdminPassword: adminPass,

@@ -41,6 +41,12 @@ services:
       # the Docker network (http://wordpress — used by the Playwright browser).
       # ($$ is escaped to a literal $ for the generated wp-config.php.)
       WORDPRESS_CONFIG_EXTRA: |
+        // Behind a TLS-terminating reverse proxy (PUBLIC_SCHEME=https in .env),
+        // Apache sees plain HTTP — trust the proxy's X-Forwarded-Proto so the
+        // scheme detection below (and is_ssl()) yields https URLs.
+        if ( isset( $$_SERVER['HTTP_X_FORWARDED_PROTO'] ) && 'https' === $$_SERVER['HTTP_X_FORWARDED_PROTO'] ) {
+            $$_SERVER['HTTPS'] = 'on';
+        }
         if ( ! empty( $$_SERVER['HTTP_HOST'] ) ) {
             $$scheme = ( ! empty( $$_SERVER['HTTPS'] ) && $$_SERVER['HTTPS'] !== 'off' ) ? 'https' : 'http';
             define( 'WP_HOME', $$scheme . '://' . $$_SERVER['HTTP_HOST'] );
@@ -54,7 +60,10 @@ services:
         // sandbox, and the web container can read/write the bind-mounted tree.
         define( 'FS_METHOD', 'direct' );
     ports:
-      - "${WP_PORT}:80"
+      # WP_BIND ("127.0.0.1:" or empty, from .env) restricts the published port
+      # to one host interface — loopback-only when a reverse proxy owns the
+      # public side.
+      - "${WP_BIND:-}${WP_PORT}:80"
     volumes:
       - ./workspace/wp:/var/www/html
       - ./php/php.ini:/usr/local/etc/php/conf.d/php.ini:ro   # custom PHP overrides (upload limits, etc.)

@@ -162,8 +162,8 @@ export function buildOps(config, registry, manager, sessions, presets) {
   // agent-connector ability already installed in every env. WP emits the URL on
   // its own (in-container) home host, so rebase it to the public host + the
   // env's published port to make it directly openable (issue #74) — redemption
-  // uses the request host, so the token is host-agnostic. Plain http until env
-  // sites are proxied too (TLS phase 2, issue #73).
+  // uses the request host, so the token is host-agnostic. Scheme follows the
+  // env record (https for proxy-fronted envs, issue #73).
   const mintAdminLogin = async (env) => {
     await assertUsable(env);
     let res;
@@ -177,7 +177,7 @@ export function buildOps(config, registry, manager, sessions, presets) {
       throw httpErr(502, `admin login link unavailable: ${String(res.stderr || url || '').trim().slice(0, 200)}`);
     }
     const u = new URL(url);
-    return { loginUrl: `http://${config.publicHost}:${env.port}${u.pathname}${u.search}` };
+    return { loginUrl: `${env.scheme === 'https' ? 'https' : 'http'}://${config.publicHost}:${env.port}${u.pathname}${u.search}` };
   };
 
   // Read a session's event log.
@@ -226,9 +226,9 @@ export function buildOps(config, registry, manager, sessions, presets) {
     const model = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : undefined;
     const agent = AGENTS[body.agent] ? body.agent : undefined; // first-prompt session agent; else default
 
-    // wpUrl from the public host, not the stored record (issue #74) — same as
-    // publicView in status.js.
-    const wpUrl = (rec) => `http://${config.publicHost}:${rec.port}`;
+    // wpUrl: host from config (issue #74), scheme from the record (a warm env
+    // claimed after an https switch was still built http) — same as publicView.
+    const wpUrl = (rec) => `${rec.scheme === 'https' ? 'https' : 'http'}://${config.publicHost}:${rec.port}`;
 
     if (presetIds.length === 1 && !custom) {
       const claimed = await manager.claimAndStart(presetIds[0], { name: body.name, prompt: prompt || undefined, model, agent });
@@ -255,7 +255,7 @@ export function buildOps(config, registry, manager, sessions, presets) {
       name: record.name,
       port: record.port,
       appPorts: record.appPorts ?? [],
-      wpUrl: `http://${config.publicHost}:${record.port}`,
+      wpUrl: `${record.scheme === 'https' ? 'https' : 'http'}://${config.publicHost}:${record.port}`,
       status: record.status,
       duplicatedFrom: source.name,
     };

@@ -17,20 +17,45 @@
 #   claude mcp add --transport http katalyst https://<your-ip>:4000/mcp \
 #     --header "Authorization: Bearer $DEVBOX_API_TOKEN"
 #
-# Note: this secures the CONTROL PLANE (API token, MCP, session streams, UI).
-# The per-env WordPress sites on their own ports remain plain HTTP until they
-# are proxied too (bigger change: compose port rebinding + WP siteurl scheme).
+# This secures the CONTROL PLANE (API token, MCP, session streams, UI).
+#
+# To ALSO serve the per-env WordPress sites over HTTPS (TLS phase 2): a
+# certificate is valid for any port, so Caddy can terminate TLS for the whole
+# env port range and proxy port-for-port to loopback. Three steps:
+#
+#   1. gen-env-sites.sh <your-ip> <host[,host...]> <lo>-<hi> > /etc/caddy/env-sites.caddy
+#      (match the server's WP_PORT_RANGE; hosts = the bare IP, and/or a domain
+#      pointed at it), and uncomment the import below.
+#   2. In the server env: DEVBOX_PUBLIC_SCHEME=https — new envs then bind
+#      their published ports to 127.0.0.1 (Caddy owns the public side) and
+#      get https wpUrl / admin-login links.
+#   3. Rebuild any warm pools (they bake the scaffold at build time).
+#
+# Envs created BEFORE the switch keep publishing their ports on 0.0.0.0 with
+# http URLs (their record says so) — pick a range slice for the proxy that
+# doesn't overlap ports docker already binds publicly, or migrate those envs.
+#
+# With a DOMAIN (A records for @ and * → this box), list it alongside the IP
+# in the site addresses below and in gen-env-sites.sh's <host,...> argument —
+# both keep working, and DEVBOX_PUBLIC_HOST=<domain> puts it in returned URLs.
 
 {
 	email you@example.com
+	# Let's Encrypt "shortlived" ACME profile (~6-day certs, Caddy auto-renews).
+	# Global (cert_issuer) rather than per-site tls blocks: the bare-IP cert
+	# REQUIRES this profile, and per-site tls directives make Caddy reject the
+	# config when the same hostname spans site blocks with different host sets
+	# ("appears in more than one automation policy"). Domain certs are simply
+	# short-lived too.
+	cert_issuer acme {
+		profile shortlived
+	}
 }
 
+# import /etc/caddy/env-sites.caddy
+
+# Control plane. With a domain, list both:  <your-ip>:4000, <your-domain>:4000 {
 <your-ip>:4000 {
-	tls {
-		issuer acme {
-			profile shortlived
-		}
-	}
 	# JSON payloads (session transcripts, env lists) compress ~10x; Caddy
 	# skips compression for SSE streams automatically.
 	encode zstd gzip

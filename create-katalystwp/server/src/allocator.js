@@ -56,7 +56,7 @@ async function freeDiskGb(path) {
 // provisioning wants published (e.g. [3000] for a Next.js dev server); each
 // gets a unique HOST port from the same range as the WP port, recorded as
 // record.appPorts = [{ host, container }].
-export async function allocate(registry, config, { nameHint, pool = null, appPorts = [] } = {}) {
+export async function allocate(registry, config, { nameHint, pool = null, appPorts = [], scheme = null } = {}) {
   return registry.mutate(async (data) => {
     const envs = Object.values(data.environments);
     // Warm-pool builds must leave a reserve of free slots for on-demand creates,
@@ -141,6 +141,13 @@ export async function allocate(registry, config, { nameHint, pool = null, appPor
       // Host-published dev-server ports ({ host, container }), allocated from
       // the same range as `port`. Empty for envs that don't publish any.
       appPorts: allocatedAppPorts,
+      // How browsers reach THIS env: https means it was scaffolded loopback-
+      // bound behind the TLS proxy. Per-env (not view-time config) because a
+      // DEVBOX_PUBLIC_SCHEME switch must not lie about envs built before it —
+      // they stay http until migrated. Records from before this field default
+      // to http everywhere. A duplicate passes its source's scheme (the copy
+      // inherits the source's compose/bind on disk).
+      scheme: scheme || config.publicScheme,
       // No wpUrl stored: public URLs are built from DEVBOX_PUBLIC_HOST + port
       // at view time (status.js publicView / ops.js), so a host config change
       // never leaves stale URLs behind (issue #74).
