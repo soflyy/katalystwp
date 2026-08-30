@@ -75,6 +75,7 @@ running. If you pass `presetIds`, fetch the available ones from `GET /presets`.
 | `GET /environments/:id/logs?which=setup&tail=N` | Setup log (`tail` defaults 200, max 5000). |
 | `POST /environments/:id/admin-login` | Mint a **one-time, 5-min, passwordless** wp-admin login URL → `{loginUrl}`. |
 | `POST /environments/:id/duplicate` | Clone the env: full data copy (DB, files, plugins, checkouts) on a fresh name + port. Body: `{name?, prompt?, model?, agent?}`. → `202`; poll the **copy** until `running`. The source briefly stops during the copy (status `duplicating`), then restarts. Sessions don't carry over. |
+| `PATCH /environments/:id` | Update list metadata: `{displayName?, tags?}`. `displayName` is the list label (blank resets to the canonical name); `tags` is a full-replacement array of short labels for organizing/filtering (lowercased + deduped server-side, `[]` clears). Only fields present are touched. |
 | `POST /environments/:id/stop` | Stop the containers (data preserved). → `status:"stopped"`. |
 | `POST /environments/:id/start` | Bring a stopped env back up. → `status:"running"`. |
 | `DELETE /environments/:id` | Destroy: stop, remove containers, delete the dir; cascades to its sessions. |

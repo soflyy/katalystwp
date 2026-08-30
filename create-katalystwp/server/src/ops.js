@@ -42,6 +42,20 @@ if (is_wp_error($r)) { fwrite(STDERR, $r->get_error_message()); exit(1); }
 echo $r['login_url'];
 `;
 
+// Normalize a user-supplied tag list (env organization labels): strings only,
+// whitespace-collapsed, lowercased, deduped, capped. Throws 400 on a non-array.
+// Shared by the HTTP PATCH route and the MCP tool so the rules can't drift.
+export function normalizeTags(input) {
+  if (!Array.isArray(input)) throw httpErr(400, 'tags must be an array of strings');
+  const out = [];
+  for (const t of input) {
+    if (typeof t !== 'string') continue;
+    const clean = t.replace(/\s+/g, ' ').trim().toLowerCase().slice(0, 32);
+    if (clean && !out.includes(clean)) out.push(clean);
+  }
+  return out.slice(0, 20);
+}
+
 const SLUG_RE = /^[a-z0-9][a-z0-9._-]*$/i; // plugin slug
 const CONST_RE = /^[A-Za-z_][A-Za-z0-9_]*$/; // PHP constant name
 

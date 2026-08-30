@@ -8,7 +8,7 @@ import { systemHealth } from './health.js';
 import { AGENTS } from './claude.js';
 import { AllocationError } from './allocator.js';
 import { composeProvision } from './provision.js';
-import { httpErr, validatePreset } from './ops.js';
+import { httpErr, validatePreset, normalizeTags } from './ops.js';
 import { openSse } from './sse.js';
 import { makeStaticHandler } from './static.js';
 
@@ -94,12 +94,19 @@ export function buildRoutes(config, registry, manager, sessions, presets, settin
       }
     }),
 
-    // Rename the list label only — canonical name/dir/compose project are untouched.
-    // Blank resets to the canonical name (displayName -> null).
+    // Update list metadata: displayName (blank resets to the canonical name)
+    // and/or tags (full replacement; [] clears). Only fields present in the
+    // body are touched — canonical name/dir/compose project never change.
     route('PATCH', '/environments/:id', async (ctx) => {
       const env = envOr404(ctx);
-      const label = String(ctx.body.displayName ?? '').replace(/\s+/g, ' ').trim();
-      const updated = await registry.update(env.id, { displayName: label ? label.slice(0, 80) : null });
+      const patch = {};
+      if ('displayName' in ctx.body) {
+        const label = String(ctx.body.displayName ?? '').replace(/\s+/g, ' ').trim();
+        patch.displayName = label ? label.slice(0, 80) : null;
+      }
+      if ('tags' in ctx.body) patch.tags = normalizeTags(ctx.body.tags);
+      if (!Object.keys(patch).length) throw httpErr(400, 'nothing to update — pass displayName and/or tags');
+      const updated = await registry.update(env.id, patch);
       ctx.send(200, await manager.describe(updated));
     }),
     route('DELETE', '/environments/:id', async (ctx) => {
