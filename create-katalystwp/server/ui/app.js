@@ -478,7 +478,8 @@ const MODELS = {
   ],
   codex: [
     { id: '', label: 'Default' },
-    { id: 'gpt-5.6-sol', label: 'gpt-5.6-sol (flagship)' },
+    { id: 'gpt-6-astra', label: 'gpt-6-astra (flagship)' }, // needs codex-cli ≥ 0.153 in the workspace
+    { id: 'gpt-5.6-sol', label: 'gpt-5.6-sol' },
     { id: 'gpt-5.6-terra', label: 'gpt-5.6-terra (balanced)' },
     { id: 'gpt-5.6-luna', label: 'gpt-5.6-luna (fast/cheap)' },
     { id: 'gpt-5.5', label: 'gpt-5.5' },
