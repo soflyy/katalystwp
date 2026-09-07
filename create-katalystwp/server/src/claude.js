@@ -22,6 +22,21 @@ import { log, redact } from './log.js';
 
 const AGENT_CWD = '/home/node'; // in-workspace.sh runs the agent here (container WORKDIR)
 
+// A session's model string may carry an @effort suffix — "opus@low",
+// "gpt-6-astra@xhigh", or bare "@max" (agent-default model at that effort).
+// claude (--effort) and codex (-c model_reasoning_effort=) speak the same five
+// levels. The suffix only splits when it names one of them, so a literal model
+// id containing @ still passes through verbatim.
+const EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
+export function splitModelEffort(spec) {
+  const s = String(spec || '');
+  const at = s.lastIndexOf('@');
+  if (at === -1) return { model: s || null, effort: null };
+  const effort = s.slice(at + 1).toLowerCase();
+  if (!EFFORT_LEVELS.has(effort)) return { model: s || null, effort: null };
+  return { model: s.slice(0, at) || null, effort };
+}
+
 // Per-agent specifics: how to build the command, which token to inject, and how
 // to turn one stdout line into { records[], sessionId?, result?, addCost?, errorText? }.
 // `records` are events in the UI's vocabulary (system/assistant/user/result/stderr/raw).
@@ -35,7 +50,9 @@ export const AGENTS = {
     resumeHint: (dir, sid) => `cd ${dir} && bash scripts/in-workspace.sh claude --resume ${sid}`,
     buildArgs(session, prompt) {
       const a = ['claude', '-p', prompt, '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--dangerously-skip-permissions'];
-      if (session.model) a.push('--model', session.model);
+      const { model, effort } = splitModelEffort(session.model);
+      if (model) a.push('--model', model);
+      if (effort) a.push('--effort', effort);
       if (session.claudeSessionId) a.push('--resume', session.claudeSessionId);
       return a;
     },
@@ -65,7 +82,9 @@ export const AGENTS = {
       // `resume` subcommand — `codex exec resume` has a narrow option set and
       // rejects them. So: codex exec <exec-flags> [resume <id>] <prompt>.
       const a = ['codex', 'exec', '--json', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '-C', AGENT_CWD];
-      if (session.model) a.push('-m', session.model);
+      const { model, effort } = splitModelEffort(session.model);
+      if (model) a.push('-m', model);
+      if (effort) a.push('-c', `model_reasoning_effort=${effort}`);
       if (session.claudeSessionId) a.push('resume', session.claudeSessionId);
       a.push(prompt);
       return a;

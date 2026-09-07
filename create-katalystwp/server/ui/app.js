@@ -468,17 +468,23 @@ const AGENTS_ORDER = ['claude', 'codex', 'opencode'];
 // server default decide". A "Custom…" escape hatch lets you type any id, except
 // for agents in NO_CUSTOM_MODEL. Set only at session start. The OpenCode (Zen)
 // list is the subset verified usable with our Zen key (see its comment below).
+// Claude and codex ids may carry an @effort suffix (low/medium/high/xhigh/max) —
+// the server splits it into --effort / -c model_reasoning_effort= (claude.js).
 const MODELS = {
   claude: [
     { id: '', label: 'Default' },
     { id: 'fable', label: 'Fable 5' },
+    { id: 'fable@max', label: 'Fable 5 @max (hardest problems)' },
     { id: 'opus', label: 'Opus 4.8' },
+    { id: 'opus@low', label: 'Opus 4.8 @low (quick tasks)' },
     { id: 'sonnet', label: 'Sonnet 4.6' },
     { id: 'haiku', label: 'Haiku 4.5' },
   ],
   codex: [
     { id: '', label: 'Default' },
     { id: 'gpt-6-astra', label: 'gpt-6-astra (flagship)' }, // needs codex-cli ≥ 0.153 in the workspace
+    { id: 'gpt-6-astra@low', label: 'gpt-6-astra @low (quick tasks)' },
+    { id: 'gpt-6-astra@xhigh', label: 'gpt-6-astra @xhigh (hard problems)' },
     { id: 'gpt-5.6-sol', label: 'gpt-5.6-sol' },
     { id: 'gpt-5.6-terra', label: 'gpt-5.6-terra (balanced)' },
     { id: 'gpt-5.6-luna', label: 'gpt-5.6-luna (fast/cheap)' },
@@ -568,7 +574,7 @@ function AgentPicker({ agent, model, prompt, onAgent, onModel, onPrompt, promptL
       </label>
     </div>
     ${custom && html`<label>Custom model id
-      <input value=${model} placeholder=${agent === 'opencode' ? 'opencode/provider-model' : 'model id'} onInput=${(e) => onModel(e.target.value)} />
+      <input value=${model} placeholder=${agent === 'opencode' ? 'opencode/provider-model' : 'model id, optionally model@effort'} onInput=${(e) => onModel(e.target.value)} />
     </label>`}
     <label>${promptLabel}${promptHint && html` <span class="muted small">${promptHint}</span>`}
       <textarea value=${prompt} rows=${promptRows} placeholder=${promptPlaceholder} onInput=${(e) => onPrompt(e.target.value)}></textarea>

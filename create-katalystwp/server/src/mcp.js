@@ -36,7 +36,8 @@ export function buildMcpRoutes(config, registry, manager, sessions, presets, set
   // Built from live config so the docs can never disagree with the default.
   const MODEL_ARG = str(
     `Model for the session (optional). Omit for the server default — "${config.claudeDefaultModel}", which Claude Code resolves to the latest Opus. ` +
-    'Accepts any Claude Code model alias or id (e.g. opus, sonnet, haiku, claude-fable-5), passed verbatim to the agent CLI. ' +
+    'Accepts any Claude Code model alias or id (e.g. opus, sonnet, haiku, claude-fable-5). ' +
+    'For claude and codex agents, append @low/@medium/@high/@xhigh/@max for reasoning effort (e.g. "opus@low", "gpt-6-astra@xhigh"; bare "@max" = default model at that effort). ' +
     'Fixed for the session\'s lifetime; codex/opencode agents have their own defaults.',
   );
   const args = (properties = {}, required = []) => ({ type: 'object', properties, required });
@@ -541,10 +542,12 @@ git, gh, and the agent CLIs. Environments are provisioned by composable
 Passing \`prompt\` to \`create_environment\` fuses the two flows: the session
 starts automatically the moment the env is ready.
 
-Both accept an optional \`model\` — any Claude Code alias or id, passed verbatim
-to the agent CLI. Omitted, a claude session runs the server default
-("${config.claudeDefaultModel}", resolved by Claude Code to the latest Opus).
-The model is fixed for the session's lifetime.
+Both accept an optional \`model\` — any Claude Code alias or id. Omitted, a
+claude session runs the server default ("${config.claudeDefaultModel}",
+resolved by Claude Code to the latest Opus). For claude and codex agents the
+model may carry an \`@effort\` suffix (low/medium/high/xhigh/max), e.g.
+\`opus@low\` or \`gpt-6-astra@xhigh\`. The model is fixed for the session's
+lifetime.
 
 \`duplicate_environment({ env })\` clones an existing environment — full DB +
 files copy on a fresh name and port (the source briefly stops during the copy,
