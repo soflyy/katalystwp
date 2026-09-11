@@ -91,7 +91,7 @@ function StatusDot({ status }) {
 
 const TRANSIENT_ENV = ['scaffolding', 'setting-up', 'configuring', 'destroying', 'duplicating'];
 
-function EnvRow({ env, onAction }) {
+function EnvRow({ env, onAction, onTag }) {
   const building = TRANSIENT_ENV.includes(env.status);
   const up = env.status === 'running' || env.status === 'degraded';
   // Link to the WP site on the SAME host the UI was loaded from (not the
@@ -103,6 +103,7 @@ function EnvRow({ env, onAction }) {
       <div class="env-top">
         <${StatusDot} status=${env.status} /> <span class="env-name" title=${env.displayName ? `${env.displayName} · ${env.name}` : env.name}>${env.displayName || env.name}</span>
         ${env.preset && html`<span class="badge" title="provisioned from preset">${env.preset}</span>`}
+        ${(env.tags || []).map((t) => html`<button class="tag-chip" key=${t} title=${`Filter by tag "${t}"`} onClick=${(e) => { e.stopPropagation(); onTag && onTag(t); }}>#${t}</button>`)}
         <a class="env-port" href=${wpUrl} target="_blank" rel="noreferrer" title="Open the site front end" onClick=${(e) => e.stopPropagation()}>:${env.port}</a>
         ${(env.appPorts || []).map((p) => html`<a class="env-port" href=${envSiteUrl(env, p.host)} target="_blank" rel="noreferrer" title=${`App port → container :${p.container}`} onClick=${(e) => e.stopPropagation()}>:${p.host}<span class="muted small">→${p.container}</span></a>`)}
         ${up && html`<button class="env-admin lnk" title="One-click passwordless wp-admin login" onClick=${(e) => { e.stopPropagation(); onAction('admin-login', env); }}>admin ↗</button>`}
@@ -157,10 +158,63 @@ function Sidebar({ sessions, envs, selectedId, now, onSelect, onNewEnv, onEnvAct
   // Declutter long lists: stopped envs (data intact, just parked) are hidden by
   // default. "Active" = anything not stopped (running/degraded/building/failed).
   const [filter, setFilter] = useState('active');
+  // Free-text filter across name/displayName/preset/tags, and a grouping mode
+  // (persisted — it's a lasting preference, unlike the transient search).
+  const [query, setQuery] = useState('');
+  const [groupBy, setGroupBy] = useState(() => { try { return localStorage.getItem('devbox_env_groupby') || 'none'; } catch { return 'none'; } });
+  const pickGroupBy = (g) => { setGroupBy(g); try { localStorage.setItem('devbox_env_groupby', g); } catch { /* private mode */ } };
+  const [collapsed, setCollapsed] = useState(() => new Set()); // collapsed group keys
+  const toggleGroup = (k) => setCollapsed((prev) => {
+    const next = new Set(prev);
+    next.has(k) ? next.delete(k) : next.add(k);
+    return next;
+  });
   const activeCount = envs.filter((e) => e.status !== 'stopped').length;
   const stoppedCount = envs.length - activeCount;
-  const shown = envs.filter((e) =>
-    filter === 'all' ? true : filter === 'stopped' ? e.status === 'stopped' : e.status !== 'stopped');
+  const q = query.trim().toLowerCase().replace(/^#/, ''); // "#demo" ≡ "demo"
+  const matchesQuery = (e) => !q
+    || e.name.toLowerCase().includes(q)
+    || (e.displayName || '').toLowerCase().includes(q)
+    || (e.preset || '').toLowerCase().includes(q)
+    || (e.tags || []).some((t) => t.includes(q));
+  // Most-recently-used first: an env's recency is its newest session activity
+  // (fall back to createdAt) — so "the one I touched last week" floats up
+  // through a wall of stopped envs.
+  const lastTouched = {};
+  for (const s of sessions) {
+    const t = String(s.lastActivityAt || '');
+    if (t > (lastTouched[s.envId] || '')) lastTouched[s.envId] = t;
+  }
+  const recency = (e) => lastTouched[e.id] || String(e.createdAt || '');
+  const shown = envs
+    .filter((e) => (filter === 'all' ? true : filter === 'stopped' ? e.status === 'stopped' : e.status !== 'stopped'))
+    .filter(matchesQuery)
+    .sort((a, b) => recency(b).localeCompare(recency(a)));
+  // Grouping: 'preset' buckets by preset; 'tag' lists an env under EACH of its
+  // tags (untagged last). [key, envs] pairs; key null = flat list, no headers.
+  const groups = (() => {
+    if (groupBy === 'preset') {
+      const m = new Map();
+      for (const e of shown) {
+        const k = e.preset || 'no preset';
+        if (!m.has(k)) m.set(k, []);
+        m.get(k).push(e);
+      }
+      return [...m.entries()].sort(([a], [b]) => (a === 'no preset') - (b === 'no preset') || a.localeCompare(b));
+    }
+    if (groupBy === 'tag') {
+      const m = new Map();
+      for (const e of shown) {
+        const keys = (e.tags && e.tags.length) ? e.tags : ['untagged'];
+        for (const k of keys) {
+          if (!m.has(k)) m.set(k, []);
+          m.get(k).push(e);
+        }
+      }
+      return [...m.entries()].sort(([a], [b]) => (a === 'untagged') - (b === 'untagged') || a.localeCompare(b));
+    }
+    return [[null, shown]];
+  })();
   const toggle = (id) => setExpanded((prev) => {
     const next = new Set(prev);
     next.has(id) ? next.delete(id) : next.add(id);
@@ -192,42 +246,57 @@ function Sidebar({ sessions, envs, selectedId, now, onSelect, onNewEnv, onEnvAct
           <button class=${`seg ${filter === 'stopped' ? 'on' : ''}`} onClick=${() => setFilter('stopped')}>Stopped ${stoppedCount}</button>
           <button class=${`seg ${filter === 'all' ? 'on' : ''}`} onClick=${() => setFilter('all')}>All ${envs.length}</button>
         </div>
+        <div class="env-tools">
+          <input class="env-search" type="search" placeholder="Search name, preset, #tag…" value=${query} onInput=${(e) => setQuery(e.target.value)} />
+          <select class="env-groupby" value=${groupBy} onChange=${(e) => pickGroupBy(e.target.value)} title="Group environments">
+            <option value="none">flat</option>
+            <option value="preset">by preset</option>
+            <option value="tag">by tag</option>
+          </select>
+        </div>
         <div class="side-list">
           ${envs.length === 0 && html`<div class="muted pad small">No environments — create one.</div>`}
-          ${envs.length > 0 && shown.length === 0 && html`<div class="muted pad small">No ${filter} environments.</div>`}
-          ${shown.map((e) => {
-            const envSessions = sessions
-              .filter((s) => s.envId === e.id)
-              .sort((a, b) => String(b.lastActivityAt || '').localeCompare(String(a.lastActivityAt || '')));
-            // Archived sessions are kept but hidden behind a reveal, so a busy env
-            // (20 sessions) can show just the two you're working on.
-            const active = envSessions.filter((s) => !s.archived);
-            const archived = envSessions.filter((s) => s.archived);
-            const open = expanded.has(e.id) || e.id === selEnvId;
-            const showArch = archOpen.has(e.id);
-            const itemProps = { selectedId, now, onSelect, onDelete: onDeleteSession, onArchive: onArchiveSession, onRestore: onRestoreSession };
-            return html`
-              <div class="env-group" key=${e.id}>
-                <${EnvRow} env=${e} onAction=${onEnvAction} />
-                <button class="sess-toggle" onClick=${() => toggle(e.id)}>
-                  <span class="chev">${open ? '▾' : '▸'}</span>
-                  ${active.length} session${active.length === 1 ? '' : 's'}
-                  ${archived.length > 0 && html`<span class="muted small"> · ${archived.length} archived</span>`}
-                </button>
-                ${open && html`
-                  <div class="env-sessions">
-                    ${active.length === 0 && archived.length === 0 && html`<div class="muted pad small no-sess">No sessions yet.</div>`}
-                    ${active.length === 0 && archived.length > 0 && html`<div class="muted pad small no-sess">No active sessions.</div>`}
-                    ${active.map((s) => html`<${SessionItem} ...${itemProps} s=${s} key=${s.id} />`)}
-                    ${archived.length > 0 && html`
-                      <button class="arch-toggle" onClick=${() => toggleArch(e.id)}>
-                        <span class="chev">${showArch ? '▾' : '▸'}</span>
-                        Archived (${archived.length})
-                      </button>`}
-                    ${showArch && archived.map((s) => html`<${SessionItem} ...${itemProps} s=${s} key=${s.id} />`)}
-                  </div>`}
-              </div>`;
-          })}
+          ${envs.length > 0 && shown.length === 0 && html`<div class="muted pad small">${q ? `No matches for “${query.trim()}”.` : `No ${filter} environments.`}</div>`}
+          ${groups.map(([groupKey, groupEnvs]) => html`
+            ${groupKey !== null && html`
+              <button class="group-head" key=${`h:${groupKey}`} onClick=${() => toggleGroup(groupKey)}>
+                <span class="chev">${collapsed.has(groupKey) ? '▸' : '▾'}</span>
+                ${groupBy === 'tag' && groupKey !== 'untagged' ? `#${groupKey}` : groupKey}
+                <span class="muted small">${groupEnvs.length}</span>
+              </button>`}
+            ${(groupKey === null || !collapsed.has(groupKey)) && groupEnvs.map((e) => {
+              const envSessions = sessions
+                .filter((s) => s.envId === e.id)
+                .sort((a, b) => String(b.lastActivityAt || '').localeCompare(String(a.lastActivityAt || '')));
+              // Archived sessions are kept but hidden behind a reveal, so a busy env
+              // (20 sessions) can show just the two you're working on.
+              const active = envSessions.filter((s) => !s.archived);
+              const archived = envSessions.filter((s) => s.archived);
+              const open = expanded.has(e.id) || e.id === selEnvId;
+              const showArch = archOpen.has(e.id);
+              const itemProps = { selectedId, now, onSelect, onDelete: onDeleteSession, onArchive: onArchiveSession, onRestore: onRestoreSession };
+              return html`
+                <div class="env-group" key=${groupKey === null ? e.id : `${groupKey}:${e.id}`}>
+                  <${EnvRow} env=${e} onAction=${onEnvAction} onTag=${setQuery} />
+                  <button class="sess-toggle" onClick=${() => toggle(e.id)}>
+                    <span class="chev">${open ? '▾' : '▸'}</span>
+                    ${active.length} session${active.length === 1 ? '' : 's'}
+                    ${archived.length > 0 && html`<span class="muted small"> · ${archived.length} archived</span>`}
+                  </button>
+                  ${open && html`
+                    <div class="env-sessions">
+                      ${active.length === 0 && archived.length === 0 && html`<div class="muted pad small no-sess">No sessions yet.</div>`}
+                      ${active.length === 0 && archived.length > 0 && html`<div class="muted pad small no-sess">No active sessions.</div>`}
+                      ${active.map((s) => html`<${SessionItem} ...${itemProps} s=${s} key=${s.id} />`)}
+                      ${archived.length > 0 && html`
+                        <button class="arch-toggle" onClick=${() => toggleArch(e.id)}>
+                          <span class="chev">${showArch ? '▾' : '▸'}</span>
+                          Archived (${archived.length})
+                        </button>`}
+                      ${showArch && archived.map((s) => html`<${SessionItem} ...${itemProps} s=${s} key=${s.id} />`)}
+                    </div>`}
+                </div>`;
+            })}`)}
         </div>
       </div>
     </aside>`;
@@ -1046,15 +1115,23 @@ function TokenGate({ onSave }) {
 
 function RenameEnvModal({ env, onClose, onSave }) {
   const [val, setVal] = useState(env.displayName || env.name);
-  const save = () => onSave(env, val.trim());
+  const [tagsText, setTagsText] = useState((env.tags || []).join(', '));
+  // Tags are sent as a full-replacement list; the server lowercases + dedupes.
+  const save = () => onSave(env, val.trim(), tagsText.split(',').map((t) => t.trim()).filter(Boolean));
+  const onKeys = (e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') onClose(); };
   return html`
     <div class="modal-bg" onClick=${onClose}>
       <div class="modal" onClick=${(e) => e.stopPropagation()}>
-        <h3>Rename environment</h3>
+        <h3>Rename & tag environment</h3>
         <p class="muted small">List label only. The canonical name <code>${env.name}</code> (its directory and Docker project) is unchanged. Leave blank to reset to it.</p>
         <input autofocus value=${val} placeholder=${env.name}
           onInput=${(e) => setVal(e.target.value)}
-          onKeyDown=${(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') onClose(); }} />
+          onKeyDown=${onKeys} />
+        <label>Tags <span class="muted small">— comma-separated; used for search and the "by tag" grouping</span>
+          <input value=${tagsText} placeholder="demo, breakdance, client-x"
+            onInput=${(e) => setTagsText(e.target.value)}
+            onKeyDown=${onKeys} />
+        </label>
         <div class="modal-foot">
           <button class="btn ghost" onClick=${onClose}>Cancel</button>
           <button class="btn" onClick=${save}>Save</button>
@@ -1167,9 +1244,9 @@ function App() {
     const s = await api(`/environments/${envId}/sessions`, { method: 'POST', body: JSON.stringify({ prompt, agent, model }) });
     setNewSession(null); await refresh(); setSelectedId(s.id);
   };
-  const renameEnvironment = async (env, displayName) => {
+  const renameEnvironment = async (env, displayName, tags) => {
     try {
-      await api(`/environments/${env.id}`, { method: 'PATCH', body: JSON.stringify({ displayName }) });
+      await api(`/environments/${env.id}`, { method: 'PATCH', body: JSON.stringify({ displayName, tags }) });
       setRenameEnv(null); await refresh();
     } catch (e) { alert(`Rename failed: ${e.message}`); }
   };

@@ -67,6 +67,8 @@ export function publicView(record, { status, publicHost }) {
     wpUrl: `${record.scheme === 'https' ? 'https' : 'http'}://${publicHost || 'localhost'}:${record.port}`,
     status,
     preset: record.preset || null,
+    // User-set organization labels (normalizeTags in ops.js); [] when unset.
+    tags: record.tags ?? [],
     createdAt: record.createdAt,
     setupStartedAt: record.setupStartedAt,
     lastError: record.lastError,

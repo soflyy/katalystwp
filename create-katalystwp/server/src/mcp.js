@@ -16,7 +16,7 @@
 import { route } from './http.js';
 import { systemHealth } from './health.js';
 import { AGENTS } from './claude.js';
-import { httpErr, validatePreset } from './ops.js';
+import { httpErr, validatePreset, normalizeTags } from './ops.js';
 
 const LATEST_PROTOCOL = '2025-06-18';
 const KNOWN_PROTOCOLS = new Set(['2025-06-18', '2025-03-26', '2024-11-05']);
@@ -179,6 +179,19 @@ export function buildMcpRoutes(config, registry, manager, sessions, presets, set
         const rec = ops.envByRef(env);
         const clean = String(label ?? '').replace(/\s+/g, ' ').trim();
         return manager.describe(await registry.update(rec.id, { displayName: clean ? clean.slice(0, 80) : null }));
+      },
+    },
+    {
+      name: 'set_environment_tags',
+      category: 'Environments',
+      description: 'Replace an environment\'s tags — short lowercase labels for organizing and filtering the env list (e.g. ["breakdance", "repro"]). Full replacement: pass the complete list; an empty array clears all tags. Tags are normalized (lowercased, deduped, max 20 of ≤32 chars).',
+      inputSchema: args({
+        env: ENV_ARG,
+        tags: { type: 'array', items: { type: 'string' }, description: 'The complete tag list to set.' },
+      }, ['env', 'tags']),
+      handler: async ({ env, tags }) => {
+        const rec = ops.envByRef(env);
+        return manager.describe(await registry.update(rec.id, { tags: normalizeTags(tags) }));
       },
     },
     {

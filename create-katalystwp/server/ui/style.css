@@ -32,6 +32,24 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; font: 12.5px/1.5
 .env-filter .seg:hover { color: var(--text); }
 .env-filter .seg.on { background: var(--accent); border-color: var(--accent); color: #07101f; font-weight: 600; }
 
+/* search + group-by controls under the filter segs */
+.env-tools { display: flex; gap: 4px; padding: 0 12px 8px; }
+.env-tools .env-search { flex: 1; min-width: 0; background: var(--bg); color: var(--text);
+  border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; font: inherit; font-size: 12px; }
+.env-tools .env-search::placeholder { color: var(--muted); }
+.env-tools .env-groupby { background: var(--panel2); color: var(--muted); border: 1px solid var(--line);
+  border-radius: 6px; font-size: 11px; padding: 4px; cursor: pointer; }
+.env-tools .env-groupby:hover { color: var(--text); }
+
+/* collapsible group headers (group-by preset/tag) */
+.group-head { display: flex; align-items: center; gap: 6px; width: 100%; background: var(--panel2);
+  border: 0; border-top: 1px solid var(--line); color: var(--text); cursor: pointer;
+  font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+  text-align: left; padding: 5px 12px; position: sticky; top: 0; z-index: 1; }
+.group-head:hover { color: var(--accent); }
+.group-head .chev { width: 9px; display: inline-block; }
+.group-head .muted { margin-left: auto; font-weight: 400; text-transform: none; }
+
 /* environment rows */
 .env { padding: 7px 12px; border-top: 1px solid var(--line); }
 .env-top { display: flex; align-items: center; gap: 7px; }
@@ -191,6 +209,10 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; font: 12.5px/1.5
 /* preset badge on an env row */
 .badge { font-size: 10px; text-transform: uppercase; letter-spacing: .03em; color: var(--accent);
   background: var(--accent2); border-radius: 99px; padding: 1px 7px; flex: none; }
+/* user tags on an env row — click filters the list by that tag */
+.tag-chip { font-size: 10px; color: var(--muted); background: var(--panel2);
+  border: 1px solid var(--line); border-radius: 99px; padding: 1px 7px; flex: none; cursor: pointer; }
+.tag-chip:hover { color: var(--accent); border-color: var(--accent); }
 
 /* system health */
 .modal.health { width: 660px; }
