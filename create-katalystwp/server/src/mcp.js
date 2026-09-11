@@ -36,7 +36,7 @@ export function buildMcpRoutes(config, registry, manager, sessions, presets, set
   // Built from live config so the docs can never disagree with the default.
   const MODEL_ARG = str(
     `Model for the session (optional). Omit for the server default — "${config.claudeDefaultModel}", which Claude Code resolves to the latest Opus. ` +
-    'Accepts any Claude Code model alias or id (e.g. opus, sonnet, haiku, claude-fable-5). ' +
+    'Accepts any Claude Code model alias or id (e.g. opus, sonnet, haiku, claude-fable-5-1, claude-fable-5). ' +
     'For claude and codex agents, append @low/@medium/@high/@xhigh/@max for reasoning effort (e.g. "opus@low", "gpt-6-astra@xhigh"; bare "@max" = default model at that effort). ' +
     'Fixed for the session\'s lifetime; codex/opencode agents have their own defaults.',
   );
