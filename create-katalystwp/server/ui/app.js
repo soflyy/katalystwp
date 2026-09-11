@@ -70,6 +70,8 @@ function reduce(items, partialRef, evt) {
       break;
     }
     case 'result':
+      // The turn is over: whatever the live line held is now an assistant bubble.
+      partialRef.text = '';
       push({ kind: 'result', result: evt.result, cost: evt.total_cost_usd, ms: evt.duration_ms, isError: evt.is_error });
       break;
     case 'stderr':
@@ -77,6 +79,7 @@ function reduce(items, partialRef, evt) {
       break;
     case 'control':
       if (evt.subtype === 'turn-start') push({ kind: 'control', text: '— turn —' });
+      if (evt.subtype === 'turn-end') partialRef.text = '';
       break;
     case 'raw':
       push({ kind: 'raw', text: evt.text });
@@ -365,12 +368,27 @@ function SessionView({ session, now, onChanged, onMenu, onDelete, onArchive, onR
       if (cancelled) return;
       setLoading(false);
       es = new EventSource(streamUrl(id));
+      // The server replays its ring buffer (backlog) on every connect, then
+      // sends a `snapshot` control event before going live. Backlog token
+      // deltas must NOT feed the live line: the history load above already
+      // rebuilt it, and deltas of completed messages were filtered out of
+      // that response (partials=live) — so their uuids aren't in `seen`, while
+      // the assistant events that would reset the line ARE. Replaying them
+      // used to concatenate every message of the turn into a phantom bubble
+      // that outlived the "done" footer. Re-armed on each auto-reconnect.
+      let replaying = true;
+      es.onopen = () => { replaying = true; };
       es.onmessage = (m) => {
         let evt; try { evt = JSON.parse(m.data); } catch { return; }
-        if (evt.type === 'control' && evt.subtype === 'snapshot') return;
+        if (evt.type === 'control' && evt.subtype === 'snapshot') { replaying = false; return; }
         if (evt.uuid && seen.current.has(evt.uuid)) return;
         if (evt.uuid) seen.current.add(evt.uuid);
         if (evt.type === 'control' && evt.subtype === 'turn-end') { setBusy(false); onChanged && onChanged(); }
+        // Control events carry no uuid, so a replayed turn-start would also
+        // duplicate the "— turn —" divider history already drew; the turn-end
+        // side effect above still runs so a reconnect mid-turn can't leave the
+        // composer stuck disabled.
+        if (replaying && (evt.type === 'stream_event' || evt.type === 'control')) return;
         setItems((prev) => { const next = prev.slice(); reduce(next, partialRef.current, evt); return next; });
         setPartial(partialRef.current.text);
       };
@@ -454,7 +472,7 @@ function SessionView({ session, now, onChanged, onMenu, onDelete, onArchive, onR
         ${loading && !loadErr && html`<div class="muted pad">loading history…</div>`}
         ${loadErr && html`<div class="err-msg">could not load history: ${loadErr}</div>`}
         ${items.map((it, i) => html`<${Bubble} it=${it} key=${i} />`)}
-        ${partial && html`<div class="bubble assistant live"><pre>${partial}</pre><span class="cursor">▍</span></div>`}
+        ${running && partial && html`<div class="bubble assistant live"><pre>${partial}</pre><span class="cursor">▍</span></div>`}
         ${running && !partial && !loading && html`<div class="muted pad">…thinking</div>`}
       </div>
       ${hasNew && html`<button class="new-msgs" onClick=${jumpToBottom}>↓ New messages</button>`}
