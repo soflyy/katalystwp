@@ -539,14 +539,22 @@ const AGENTS_ORDER = ['claude', 'codex', 'opencode'];
 // list is the subset verified usable with our Zen key (see its comment below).
 // Claude and codex ids may carry an @effort suffix (low/medium/high/xhigh/max) —
 // the server splits it into --effort / -c model_reasoning_effort= (claude.js).
+// Claude Code's default effort is `high` on every model that supports it
+// (Opus 4.7 alone defaults to xhigh), so a bare id == @high.
+// Fable is pinned by full id: the `fable` alias flips between 5 and 5.1 by
+// Claude Code version (≥ 2.1.257 → 5.1) and by provider, so the alias would
+// silently pick a different model in an older workspace. Opus/sonnet/haiku use
+// the family alias on purpose — "latest of the family" is what we want there
+// (Claude Code ≥ 2.1.219 resolves opus → Opus 5, sonnet → Sonnet 5).
 const MODELS = {
   claude: [
     { id: '', label: 'Default' },
-    { id: 'fable', label: 'Fable 5' },
-    { id: 'fable@max', label: 'Fable 5 @max (hardest problems)' },
-    { id: 'opus', label: 'Opus 4.8' },
-    { id: 'opus@low', label: 'Opus 4.8 @low (quick tasks)' },
-    { id: 'sonnet', label: 'Sonnet 4.6' },
+    { id: 'claude-fable-5-1', label: 'Fable 5.1' },
+    { id: 'claude-fable-5-1@max', label: 'Fable 5.1 @max (hardest problems)' },
+    { id: 'claude-fable-5', label: 'Fable 5' },
+    { id: 'opus', label: 'Opus 5' },
+    { id: 'opus@low', label: 'Opus 5 @low (quick tasks)' },
+    { id: 'sonnet', label: 'Sonnet 5' },
     { id: 'haiku', label: 'Haiku 4.5' },
   ],
   codex: [

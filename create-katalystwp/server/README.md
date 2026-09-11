@@ -25,7 +25,7 @@ The server is a **thin orchestrator over the scaffolded project's own scripts**:
 | `DEVBOX_API_TOKEN` | — | the API password — required to bind a non-loopback address. Seeds nothing; set before start. |
 | `GITHUB_TOKEN` | — | **seed only** — GitHub token for clone/commit/push. Managed on the Settings page (`data/settings.json`); this env var just seeds it on first run. |
 | `CLAUDE_CODE_OAUTH_TOKEN` | — | **seed only** — Claude token, likewise managed in Settings. Forwarded by `in-workspace.sh` exactly like `npm run claude` (or put it in `~/.agent-sandbox/oauth-token`). |
-| `CLAUDE_DEFAULT_MODEL` | `opus` | default model for Claude sessions (`opus` → latest Opus 4.8); set any model id to override, per-session via the API |
+| `CLAUDE_DEFAULT_MODEL` | `opus` | default model for Claude sessions (`opus` → latest Opus, Opus 5 on current Claude Code); set any alias or id (e.g. `claude-fable-5-1`) to override, per-session via the API |
 | `SESSION_RING_BUFFER` | `500` | live events buffered per session for late SSE subscribers |
 | `DEVBOX_PORT` | `4000` | API listen port |
 | `DEVBOX_BIND` | `127.0.0.1` | bind address. `0.0.0.0` (or a specific IP) to reach it over the network — **requires `DEVBOX_API_TOKEN`** (the server refuses to start network-exposed without one) and a firewall/VPN |
