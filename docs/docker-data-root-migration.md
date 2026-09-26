@@ -194,10 +194,9 @@ Run by Claude with Louis's go-ahead, with all envs already stopped by Louis.
 
 Outage window (step 2 → step 6): ~4 minutes, because the warm copy had done the work.
 
-**Pending — step 7 (reclaim root disk):** `/var/lib/containerd.old` (80 G) and
-`/var/lib/docker.old` are still on the root disk as the rollback. After a day of
-normal use: `rm -rf /var/lib/containerd.old /var/lib/docker.old` → root disk
-drops from ~108 G used to ~28 G.
+**Step 7 done the same day** at Louis's request: `/var/lib/containerd.old` and
+`/var/lib/docker.old` deleted → root disk 108 G → 28 G used (88 G free). The
+volume store is now the only copy.
 
 **Volume is now 87 % full (38 G free)** because it carries env data (~164 G)
 plus the 80 G store. Resize it in the DO control panel, then `resize2fs /dev/sda`
