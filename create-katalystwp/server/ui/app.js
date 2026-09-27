@@ -118,6 +118,7 @@ function EnvRow({ env, onAction, onTag }) {
           : html`
             ${up && html`<button class="lnk" onClick=${() => onAction('session', env)}>+ session</button>`}
             ${up && html`<button class="lnk" onClick=${() => onAction('stop', env)}>stop</button>`}
+            ${up && html`<button class="lnk" title="Update the Claude Code / Codex / OpenCode CLIs inside this env (npm -g @latest). Needed for new models like Opus 5.5." onClick=${() => onAction('update-agents', env)}>update agents</button>`}
             ${env.status === 'stopped' && html`<button class="lnk" onClick=${() => onAction('start', env)}>start</button>`}
             ${env.status === 'failed' && html`<button class="lnk" onClick=${() => onAction('start', env)}>retry</button>`}
             ${(up || env.status === 'stopped') && html`<button class="lnk" title="Clone this environment (full data copy on a new port)" onClick=${() => onAction('duplicate', env)}>duplicate</button>`}
@@ -570,8 +571,10 @@ const MODELS = {
     { id: 'claude-fable-5-1', label: 'Fable 5.1' },
     { id: 'claude-fable-5-1@max', label: 'Fable 5.1 @max (hardest problems)' },
     { id: 'claude-fable-5', label: 'Fable 5' },
-    { id: 'opus', label: 'Opus 5' },
-    { id: 'opus@low', label: 'Opus 5 @low (quick tasks)' },
+    { id: 'claude-opus-5-5', label: 'Opus 5.5 (needs Claude Code ≥ 2.1.280 — "update agents")' },
+    { id: 'claude-opus-5-5@low', label: 'Opus 5.5 @low (quick tasks)' },
+    { id: 'opus', label: 'Opus (latest this env supports)' },
+    { id: 'opus@low', label: 'Opus @low (quick tasks)' },
     { id: 'sonnet', label: 'Sonnet 5' },
     { id: 'haiku', label: 'Haiku 4.5' },
   ],
@@ -1345,6 +1348,11 @@ function App() {
       if (action === 'session') return setNewSession({ preselect: env.id });
       if (action === 'start') await api(`/environments/${env.id}/start`, { method: 'POST' });
       if (action === 'stop') await api(`/environments/${env.id}/stop`, { method: 'POST' });
+      if (action === 'update-agents') {
+        if (!confirm(`Update the agent CLIs (Claude Code, Codex, OpenCode) in "${env.displayName || env.name}" to their latest releases?\n\nTakes 1–3 minutes. Survives stop/start; an image rebuild reverts it.`)) return;
+        const { before, after } = await api(`/environments/${env.id}/update-agents`, { method: 'POST' });
+        alert(['Agents updated:', ...Object.keys(after).map((k) => `  ${k}: ${before[k] || '-'} → ${after[k] || '-'}`)].join('\n'));
+      }
       if (action === 'duplicate') {
         // The source stops for a moment while the DB is copied, then restarts.
         const name = prompt(

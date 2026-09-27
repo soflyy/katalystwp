@@ -6,6 +6,7 @@
 
 import { readFile, rm } from 'node:fs/promises';
 import { exec } from './docker.js';
+import { log } from './log.js';
 import { AGENTS } from './claude.js';
 import { composeProvision } from './provision.js';
 
@@ -194,6 +195,39 @@ export function buildOps(config, registry, manager, sessions, presets) {
     return { loginUrl: `${env.scheme === 'https' ? 'https' : 'http'}://${config.publicHost}:${env.port}${u.pathname}${u.search}` };
   };
 
+  // Update the agent CLIs inside a running env's workspace container. They are
+  // installed unpinned at image build time and then frozen by the layer cache,
+  // so an env can lag the newest models for weeks (Opus 5.5 needs Claude Code
+  // >= 2.1.280; the whole fleet was on 2.1.278). Runs as root because the npm
+  // global prefix (/usr/local) is root-owned in the image. The update lands in
+  // the container's writable layer: it survives stop/start (same container) but
+  // NOT an image rebuild (reset, warm-pool rebuild, duplicate) — those pick up
+  // whatever the layer cache holds. Cursor (curl installer) is not touched.
+  const AGENT_PKGS = ['@anthropic-ai/claude-code', '@openai/codex', 'opencode-ai'];
+  const AGENT_BINS = ['claude', 'codex', 'opencode'];
+  const VERSIONS_SH = AGENT_BINS.map((b) => `printf '%s=' ${b}; (${b} --version 2>/dev/null | grep -oE '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1) || echo -`).join('; ');
+  const readAgentVersions = async (env) => {
+    const res = await exec(env, 'workspace', ['sh', '-lc', VERSIONS_SH], { timeout: 60_000 });
+    const out = {};
+    for (const line of String(res.stdout || '').split('\n')) {
+      const m = line.match(/^(\w+)=(.*)$/);
+      if (m) out[m[1]] = m[2].trim() || null;
+    }
+    return out;
+  };
+  const updateAgents = async (env) => {
+    await assertUsable(env);
+    const before = await readAgentVersions(env);
+    try {
+      await exec(env, 'workspace', ['npm', 'install', '-g', '--no-fund', '--no-audit', ...AGENT_PKGS.map((p) => `${p}@latest`)], { user: 'root', timeout: 600_000 });
+    } catch (err) {
+      throw httpErr(502, `agent update failed: ${String(err.stderr || err.message || '').trim().slice(-300)}`);
+    }
+    const after = await readAgentVersions(env);
+    log.info(`[${env.name}] agents updated: ${AGENT_BINS.map((b) => `${b} ${before[b] || '-'} -> ${after[b] || '-'}`).join(', ')}`);
+    return { before, after, note: 'Persists across stop/start; an image rebuild (reset, warm-pool rebuild, duplicate) reverts to the image layer.' };
+  };
+
   // Read a session's event log.
   //
   // `partials` controls stream_event token deltas (numerous but only needed to
@@ -283,6 +317,7 @@ export function buildOps(config, registry, manager, sessions, presets) {
     destroyEnvironment,
     publicSession,
     mintAdminLogin,
+    updateAgents,
     readTranscript,
     createEnvironment,
     duplicateEnvironment,

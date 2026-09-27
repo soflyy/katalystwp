@@ -58,10 +58,11 @@ export async function ps(env) {
 
 // Run a command inside a service. `detach` → `-d`; envNames are forwarded by
 // name only (values come from the spawned child's env).
-export function exec(env, service, argv, { detach = false, envNames = [], envValues = {}, tty = false, timeout } = {}) {
+export function exec(env, service, argv, { detach = false, envNames = [], envValues = {}, tty = false, timeout, user } = {}) {
   const flags = [];
   if (detach) flags.push('-d');
   if (!tty) flags.push('-T');
+  if (user) flags.push('-u', user); // e.g. 'root' for npm -g into the image's /usr/local
   for (const name of envNames) flags.push('-e', name);
   return compose(env, ['exec', ...flags, service, ...argv], { env: envValues, timeout });
 }
