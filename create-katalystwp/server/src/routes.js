@@ -73,6 +73,11 @@ export function buildRoutes(config, registry, manager, sessions, presets, settin
     route('POST', '/environments/:id/admin-login', async (ctx) => {
       ctx.send(200, await ops.mintAdminLogin(envOr404(ctx)));
     }),
+    // Update the Claude Code / Codex / OpenCode CLIs inside a running env
+    // (npm -g @latest as root). Synchronous; can take a couple of minutes.
+    route('POST', '/environments/:id/update-agents', async (ctx) => {
+      ctx.send(200, await ops.updateAgents(envOr404(ctx)));
+    }),
     // Clone an env: full data copy on a fresh name + port (sessions don't carry
     // over; the source briefly stops during the copy, then restarts). Async
     // like create — 202, then poll the COPY until `running`.

@@ -36,7 +36,7 @@ export function buildMcpRoutes(config, registry, manager, sessions, presets, set
   // Built from live config so the docs can never disagree with the default.
   const MODEL_ARG = str(
     `Model for the session (optional). Omit for the server default — "${config.claudeDefaultModel}", which Claude Code resolves to the latest Opus. ` +
-    'Accepts any Claude Code model alias or id (e.g. opus, sonnet, haiku, claude-fable-5-1, claude-fable-5). ' +
+    'Accepts any Claude Code model alias or id (e.g. opus, sonnet, haiku, claude-opus-5-5, claude-fable-5-1, claude-fable-5). Newer models need a recent Claude Code in the env (Opus 5.5 needs >= 2.1.280) — on a "does not support this model" error, call update_agents first. ' +
     'For claude and codex agents, append @low/@medium/@high/@xhigh/@max for reasoning effort (e.g. "opus@low", "gpt-6-astra@xhigh"; bare "@max" = default model at that effort). ' +
     'Fixed for the session\'s lifetime; codex/opencode agents have their own defaults.',
   );
@@ -201,6 +201,13 @@ export function buildMcpRoutes(config, registry, manager, sessions, presets, set
       description: 'Mint a one-time, 5-minute, passwordless wp-admin login URL for a running environment. No password needed — just open the returned loginUrl.',
       inputSchema: args({ env: ENV_ARG }, ['env']),
       handler: ({ env }) => ops.mintAdminLogin(ops.envByRef(env)),
+    },
+    {
+      name: 'update_agents',
+      category: 'Environments',
+      description: 'Update the Claude Code, Codex and OpenCode CLIs inside a running environment to their latest npm releases (they are frozen at image-build time otherwise). Use when a session fails with "Claude Code X does not support this model" or a Codex model error. Returns {before, after} versions. Takes 1–3 minutes; survives stop/start but not an image rebuild.',
+      inputSchema: args({ env: ENV_ARG }, ['env']),
+      handler: ({ env }) => ops.updateAgents(ops.envByRef(env)),
     },
 
     // ---- presets ----------------------------------------------------------
