@@ -12,7 +12,7 @@ import { rewriteCloneIdentity } from './clone.js';
 import * as docker from './docker.js';
 import * as gitauth from './gitauth.js';
 import { computeStatus, coreUp, anyUp, publicView, TRANSIENT } from './status.js';
-import { composeProvision } from './provision.js';
+import { composeProvision, SETUP_FAILURES_HOST_REL } from './provision.js';
 import { log, redact } from './log.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -111,12 +111,49 @@ export class Manager {
       provisionPlan = await this._materializeProvision(record, provision);
       if (provision.presetName) await this.registry.update(record.id, { preset: provision.presetName });
     }
-    // Optional: once the env is up, start an agent session with this prompt
-    // (carried in-memory through the pipeline; see onEnvReady).
+    // Optional: once the env is up, start an agent session with this prompt.
+    // Persisted on the record (see _rememberInitial) so a failed setup can
+    // still fire it on retry — and so it's never lost.
     const initial = prompt ? { prompt, model, agent } : null;
+    if (initial) await this._rememberInitial(record, initial);
     // Fire-and-forget pipeline; status is observable via GET.
     this._pipeline(record, { provisionPlan, initial }).catch((err) => log.error(`[${record.name}] pipeline crashed:`, err));
     return record;
+  }
+
+  // Persist the optional first prompt on the record so it survives a failed
+  // setup (it used to live only in memory and was lost when setup failed —
+  // the user had no way to get it back). `initialPromptFiredAt` is set once
+  // the session has been started; start()/retry fires it if still unset.
+  async _rememberInitial(record, { prompt, model, agent }) {
+    await this.registry.update(record.id, {
+      initialPrompt: { prompt, model: model || null, agent: agent || null },
+      initialPromptFiredAt: null,
+    });
+  }
+
+  // Fire the persisted initial prompt once. Best-effort: its failure must not
+  // fail the environment (the env itself is fine).
+  async _fireInitial(record) {
+    const rec = this.registry.get(record.id) || record;
+    if (!rec.initialPrompt?.prompt || rec.initialPromptFiredAt) return;
+    try {
+      await this.onEnvReady?.(rec, rec.initialPrompt);
+      await this.registry.update(rec.id, { initialPromptFiredAt: new Date().toISOString() });
+    } catch (err) {
+      log.warn(`[${rec.name}] initial session failed:`, err.message);
+    }
+  }
+
+  // After a setup script ran: collect the labels of presets whose script
+  // failed (provision.js isolates each preset; see SETUP_FAILURES_FILE).
+  async _readSetupFailures(record) {
+    try {
+      const text = await readFile(join(record.dir, SETUP_FAILURES_HOST_REL), 'utf8');
+      return [...new Set(text.split('\n').map((l) => l.trim()).filter(Boolean))];
+    } catch {
+      return [];
+    }
   }
 
   // Write the setup script + defines to the env's scratch dir and assemble the
@@ -190,7 +227,9 @@ export class Manager {
       // no longer needed. Re-runs (npm run setup/reset, "retry") use the
       // project's own copies, so this doesn't break recovery.
       if (provisionPlan) await rm(provisionPlan.scratchDir, { recursive: true, force: true }).catch(() => {});
-      await registry.update(record.id, { setupFinishedAt: new Date().toISOString() });
+      const setupWarnings = await this._readSetupFailures(record);
+      if (setupWarnings.length) log.warn(`[${record.name}] setup finished with failures in: ${setupWarnings.join(', ')}`);
+      await registry.update(record.id, { setupFinishedAt: new Date().toISOString(), setupWarnings });
 
       // 2. Configure GitHub auth + git identity in the workspace (non-fatal),
       //    so an agent can clone/commit/push. (Provisioning — incl. swapping a
@@ -199,19 +238,21 @@ export class Manager {
       await registry.update(record.id, { status: 'configuring' });
       await gitauth.configure(record, config, this.settings.get().githubToken);
 
-      // 3. Up and provisioned.
-      await registry.update(record.id, { status: 'running', lastError: null });
+      // 3. Up and provisioned. A preset whose script failed does NOT fail the
+      // env (see provision.js) — it's surfaced as lastError + setupWarnings.
+      const warn = registry.get(record.id)?.setupWarnings || [];
+      await registry.update(record.id, {
+        status: 'running',
+        lastError: warn.length ? `setup finished with failures in: ${warn.join(', ')} — see the setup log` : null,
+      });
       if (pool) {
         // Warm-pool build: it's built and healthy — stop it so it waits cheaply,
         // and mark it claimable. (start is the fast cached `up -d --build`.)
         await this.stop(record);
         await registry.update(record.id, { poolReady: true });
         log.info(`[pool] ${record.name} ready (preset ${record.pool})`);
-      } else if (initial?.prompt) {
-        // Env is up — fire the optional initial session. Best-effort: its failure
-        // must not fail the environment (the env itself is fine).
-        try { await this.onEnvReady?.(record, initial); }
-        catch (err) { log.warn(`[${record.name}] initial session failed:`, err.message); }
+      } else {
+        await this._fireInitial(record); // no-op unless a prompt was persisted and not yet fired
       }
     } catch (err) {
       log.error(`[${record.name}] setup failed:`, err.message);
@@ -254,6 +295,7 @@ export class Manager {
     if (source.preset) await this.registry.update(record.id, { preset: source.preset });
     this.jobs.set(record.id, 'setting-up');
     const initial = prompt ? { prompt, model, agent } : null;
+    if (initial) await this._rememberInitial(record, initial);
     this._duplicatePipeline(source, record, { initial }).catch((err) => log.error(`[${record.name}] duplicate crashed:`, err));
     return this.registry.get(record.id);
   }
@@ -333,10 +375,7 @@ export class Manager {
 
       await registry.update(record.id, { status: 'running', lastError: null, setupFinishedAt: new Date().toISOString() });
       await logLine('duplicate complete');
-      if (initial?.prompt) {
-        try { await this.onEnvReady?.(registry.get(record.id), initial); }
-        catch (err) { log.warn(`[${record.name}] initial session failed:`, err.message); }
-      }
+      await this._fireInitial(record);
     } catch (err) {
       log.error(`[${record.name}] duplicate failed:`, err.message);
       await registry.update(record.id, { status: 'failed', lastError: truncate(redactErr(err)) });
@@ -416,6 +455,7 @@ export class Manager {
       await docker.npmRun(record, 'start', { timeout: 600_000 }); // up -d --build (cached)
       await gitauth.configure(record, this.config, this.settings.get().githubToken);
       await this.registry.update(record.id, { status: 'running', lastError: null });
+      await this._fireInitial(record); // a failed create's prompt fires on retry
     } finally {
       this.jobs.delete(record.id);
     }
@@ -576,6 +616,7 @@ export class Manager {
     const record = await this.claimPoolEnv(presetId, { name });
     if (!record) return null;
     this.jobs.set(record.id, 'configuring');
+    if (prompt) await this._rememberInitial(record, { prompt, model, agent });
     this._claimPipeline(record, { prompt, model, agent }).catch((err) => log.error(`[${record.name}] claim crashed:`, err));
     this.maintainPoolSoon(); // top the pool back up
     return record;
@@ -587,10 +628,7 @@ export class Manager {
       await docker.npmRun(record, 'start', { timeout: 600_000 }); // up -d --build (cached)
       await gitauth.configure(record, config, this.settings.get().githubToken);
       await registry.update(record.id, { status: 'running', lastError: null });
-      if (initial.prompt) {
-        try { await this.onEnvReady?.(registry.get(record.id), initial); }
-        catch (err) { log.warn(`[${record.name}] initial session failed:`, err.message); }
-      }
+      await this._fireInitial(record);
     } catch (err) {
       log.error(`[${record.name}] claim-start failed:`, err.message);
       await registry.update(record.id, { status: 'failed', lastError: truncate(redactErr(err)) });
