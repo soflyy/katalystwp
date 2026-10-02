@@ -106,6 +106,7 @@ function EnvRow({ env, onAction, onTag }) {
       <div class="env-top">
         <${StatusDot} status=${env.status} /> <span class="env-name" title=${env.displayName ? `${env.displayName} · ${env.name}` : env.name}>${env.displayName || env.name}</span>
         ${env.preset && html`<span class="badge" title="provisioned from preset">${env.preset}</span>`}
+        ${(env.setupWarnings || []).length > 0 && html`<span class="badge warn" title=${`Setup finished, but these presets' scripts failed: ${env.setupWarnings.join(', ')} — open logs`}>⚠ ${env.setupWarnings.length} preset${env.setupWarnings.length > 1 ? 's' : ''} failed</span>`}
         ${(env.tags || []).map((t) => html`<button class="tag-chip" key=${t} title=${`Filter by tag "${t}"`} onClick=${(e) => { e.stopPropagation(); onTag && onTag(t); }}>#${t}</button>`)}
         <a class="env-port" href=${wpUrl} target="_blank" rel="noreferrer" title="Open the site front end" onClick=${(e) => e.stopPropagation()}>:${env.port}</a>
         ${(env.appPorts || []).map((p) => html`<a class="env-port" href=${envSiteUrl(env, p.host)} target="_blank" rel="noreferrer" title=${`App port → container :${p.container}`} onClick=${(e) => e.stopPropagation()}>:${p.host}<span class="muted small">→${p.container}</span></a>`)}
@@ -120,7 +121,7 @@ function EnvRow({ env, onAction, onTag }) {
             ${up && html`<button class="lnk" onClick=${() => onAction('stop', env)}>stop</button>`}
             ${up && html`<button class="lnk" title="Update the Claude Code / Codex / OpenCode CLIs inside this env (npm -g @latest). Needed for new models like Opus 5.5." onClick=${() => onAction('update-agents', env)}>update agents</button>`}
             ${env.status === 'stopped' && html`<button class="lnk" onClick=${() => onAction('start', env)}>start</button>`}
-            ${env.status === 'failed' && html`<button class="lnk" onClick=${() => onAction('start', env)}>retry</button>`}
+            ${env.status === 'failed' && html`<button class="lnk" title=${env.initialPrompt && !env.initialPromptFiredAt ? 'Start the containers and fire the saved first prompt' : 'Start the containers again'} onClick=${() => onAction('start', env)}>retry</button>`}
             ${(up || env.status === 'stopped') && html`<button class="lnk" title="Clone this environment (full data copy on a new port)" onClick=${() => onAction('duplicate', env)}>duplicate</button>`}
             <button class="lnk" onClick=${() => onAction('rename', env)}>rename</button>
             <button class="lnk" onClick=${() => onAction('ssh', env)} title="Copy a command to open a shell / interactive Claude on the box">ssh</button>
@@ -724,6 +725,7 @@ function LogViewer({ env, onClose }) {
           <span class="pulse">●</span> live · last output ${fmtDur(idle)} ago${idle > 15000 ? ' — long step, still working…' : ''}</div>`}
         ${err && html`<div class="err-msg">${err}</div>`}
         ${env.lastError && html`<div class="err-msg">${env.lastError}</div>`}
+        ${env.initialPrompt?.prompt && html`<details class="tool"><summary>First prompt${env.initialPromptFiredAt ? ' (session started)' : ' (not started yet — fires on retry/start)'}${env.initialPrompt.model ? ` · ${env.initialPrompt.model}` : ''}</summary><pre>${clipText(env.initialPrompt.prompt)}</pre></details>`}
         <pre class="logbox" ref=${box} onScroll=${onScroll}>${text || '(no output yet…)'}</pre>
         <div class="modal-foot">
           <button class="btn ghost" onClick=${onClose}>Close</button>
@@ -739,6 +741,7 @@ function NewEnvModal({ presets, onClose, onCreate, onSavePreset, onUpdatePreset,
   const [model, setModel] = useState('');
   const [presetIds, setPresetIds] = useState([]); // selected preset ids, in check order
   const [setupScript, setSetupScript] = useState('');
+  const [requires, setRequires] = useState([]); // preset ids this preset depends on (editor only)
   const [devScript, setDevScript] = useState('');
   const [definesText, setDefinesText] = useState('');
   const [activateText, setActivateText] = useState('');
@@ -750,7 +753,21 @@ function NewEnvModal({ presets, onClose, onCreate, onSavePreset, onUpdatePreset,
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const togglePreset = (id) => setPresetIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  // Checking a preset also checks what it `requires` (before it) — the server
+  // expands dependencies anyway; mirroring it here keeps the list honest.
+  const togglePreset = (id) => setPresetIds((prev) => {
+    if (prev.includes(id)) return prev.filter((x) => x !== id);
+    const next = [...prev];
+    const add = (pid, seen = new Set()) => {
+      if (next.includes(pid) || seen.has(pid)) return;
+      seen.add(pid);
+      for (const dep of (presets.find((p) => p.id === pid)?.requires || [])) add(dep, seen);
+      if (!next.includes(pid)) next.push(pid);
+    };
+    add(id);
+    return next;
+  });
+  const presetLabel = (pid) => presets.find((p) => p.id === pid)?.name || pid;
 
   // Parse the custom fields into a provision object (applied on top of presets),
   // or throw a friendly error. Returns null when no custom fields are set —
@@ -778,6 +795,7 @@ function NewEnvModal({ presets, onClose, onCreate, onSavePreset, onUpdatePreset,
     setPresetName(p.name || '');
     setDescription(p.description || '');
     setSetupScript(p.setupScript || '');
+    setRequires(p.requires || []);
     setDevScript(p.devScript || '');
     setDefinesText(p.defines && Object.keys(p.defines).length ? JSON.stringify(p.defines, null, 2) : '');
     setActivateText((p.activate || []).join(', '));
@@ -788,7 +806,7 @@ function NewEnvModal({ presets, onClose, onCreate, onSavePreset, onUpdatePreset,
   // Leave edit mode and clear the form back to a blank create state.
   const clearEdit = () => {
     setEditing(null); setPresetName(''); setDescription('');
-    setSetupScript(''); setDevScript(''); setDefinesText(''); setActivateText(''); setAppPortsText('');
+    setSetupScript(''); setDevScript(''); setDefinesText(''); setActivateText(''); setAppPortsText(''); setRequires([]);
   };
 
   const create = async () => {
@@ -807,7 +825,7 @@ function NewEnvModal({ presets, onClose, onCreate, onSavePreset, onUpdatePreset,
     // Editing may legitimately save an all-blank field set; creating cannot.
     try { custom = buildCustom(!!editing); } catch (e) { setErr(e.message); return; }
     if (!editing && !custom) { setErr('Fill in at least one custom field to save as a preset.'); return; }
-    const payload = { name: nm, description: description.trim(), ...custom };
+    const payload = { name: nm, description: description.trim(), requires, ...custom };
     try {
       if (editing) { await onUpdatePreset(editing, payload); clearEdit(); }
       else { await onSavePreset(payload); setPresetName(''); setDescription(''); }
@@ -844,6 +862,7 @@ function NewEnvModal({ presets, onClose, onCreate, onSavePreset, onUpdatePreset,
               <label class="preset-check">
                 <input type="checkbox" checked=${presetIds.includes(p.id)} onChange=${() => togglePreset(p.id)} />
                 <span class="preset-name">${p.name}</span>
+                ${(p.requires || []).length > 0 && html`<span class="muted small" title="Auto-included before this preset">requires ${p.requires.map(presetLabel).join(', ')}</span>`}
                 ${p.description && html`<span class="muted small">${p.description}</span>`}
               </label>
               <button class="lnk small" title="Edit preset" onClick=${() => startEdit(p)}>✎</button>
@@ -866,6 +885,16 @@ function NewEnvModal({ presets, onClose, onCreate, onSavePreset, onUpdatePreset,
           </label>
           <label>App ports <span class="muted small">— container ports of dev servers to publish (each env gets a unique host port; shown next to the site link)</span>
             <input value=${appPortsText} placeholder="3000" onInput=${(e) => setAppPortsText(e.target.value)} />
+          </label>
+          <label>Requires <span class="muted small">— presets to provision before this one (auto-included when this preset is picked)</span>
+            <div class="preset-list compact">
+              ${presets.filter((p) => p.id !== editing).map((p) => html`
+                <label class="preset-check" key=${p.id}>
+                  <input type="checkbox" checked=${requires.includes(p.id)}
+                    onChange=${() => setRequires((prev) => (prev.includes(p.id) ? prev.filter((x) => x !== p.id) : [...prev, p.id]))} />
+                  <span class="preset-name">${p.name}</span>
+                </label>`)}
+            </div>
           </label>
           <div class="row save-preset">
             <input value=${presetName} placeholder=${editing ? 'Preset name…' : 'Save these custom fields as a preset named…'} onInput=${(e) => setPresetName(e.target.value)} />

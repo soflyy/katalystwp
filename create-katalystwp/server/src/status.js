@@ -72,5 +72,8 @@ export function publicView(record, { status, publicHost }) {
     createdAt: record.createdAt,
     setupStartedAt: record.setupStartedAt,
     lastError: record.lastError,
+    setupWarnings: record.setupWarnings ?? [],
+    initialPrompt: record.initialPrompt || null,
+    initialPromptFiredAt: record.initialPromptFiredAt || null,
   };
 }

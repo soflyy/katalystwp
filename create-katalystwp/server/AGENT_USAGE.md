@@ -69,7 +69,7 @@ running. If you pass `presetIds`, fetch the available ones from `GET /presets`.
 
 | Method & path | What it does |
 | --- | --- |
-| `POST /environments` | Create. Body: `{name?, presetIds?, provision?, prompt?, model?}`. → `202` + `{id,name,port,wpUrl,status}`. |
+| `POST /environments` | Create. Body: `{name?, presetIds?, provision?, prompt?, model?}`. → `202` + `{id,name,port,wpUrl,status}`. Preset `requires` dependencies are auto-included before the preset that needs them. `prompt` is persisted on the env as `initialPrompt` (+ `initialPromptFiredAt`); if setup fails, `POST …/start` (retry) fires it. |
 | `GET /environments` | List all envs with live status. |
 | `GET /environments/:id` | One env by **name or id**. |
 | `GET /environments/:id/logs?which=setup&tail=N` | Setup log (`tail` defaults 200, max 5000). |
@@ -87,7 +87,7 @@ running. If you pass `presetIds`, fetch the available ones from `GET /presets`.
 | `GET /sessions/:id/transcript?tail=N` | full event history. Add `&partials=none` to drop token deltas and `&clip=16384` to truncate giant strings (screenshots, whole-file tool results) — recommended before reading a long session. |
 | `PATCH /sessions/:id` | `{title}` → rename. |
 | `POST /sessions/:id/interrupt` · `DELETE /sessions/:id` | interrupt the turn / delete the session. |
-| `GET /presets` · `POST/PUT/DELETE /presets[/:id]` | manage provisioning presets. |
+| `GET /presets` · `POST/PUT/DELETE /presets[/:id]` | manage provisioning presets. A preset may list `requires: [presetId…]` — provisioned before it, auto-included on create (e.g. Sidekick (dev) requires Agent Connector (dev)). |
 | `GET /host` | system health: memory/CPU/disk, docker usage, per-env memory, RAM headroom. Check before mass-creating. |
 | `POST /control/interrupt-all` · `/control/stop-all` · `/control/shutdown` | stop all turns / stop all envs / full teardown + exit. |
 | `GET /health` | Liveness of the control server itself. |
@@ -125,7 +125,7 @@ UI at `/`.
 ## Rules and gotchas
 
 - **Names** must match `^[a-z0-9][a-z0-9-]{1,38}$` and be **unique** (reuse → `409`). Omit `name` for an auto-generated one.
-- **Create is async** — poll until `running`, don't treat the `202` as ready.
+- **Create is async** — poll until `running`, don't treat the `202` as ready. A preset whose setup script fails does **not** fail the env any more: it comes up `running` with `setupWarnings: ["<preset name>", …]` and a `lastError` saying so — check `setupWarnings` on the env and read `GET …/logs?which=setup` before assuming everything was provisioned.
 - **One WordPress port per env** is the only host port; returned as `wpUrl`. Inside the env's containers the site is `http://wordpress`.
 - **wp-admin:** `POST /environments/:id/admin-login` returns a one-time passwordless login URL — no need to know the admin password.
 - **Models:** `model` is optional wherever it appears. Omitted, a Claude session runs the server default (the `opus` alias — resolved by Claude Code to the **latest Opus**). Pass any Claude Code alias or id (`sonnet`, `haiku`, `claude-opus-5-5`, `claude-fable-5-1`, `claude-fable-5`, …) to override — newer models need a recent enough Claude Code inside the env (see `update-agents`); the model is fixed for the session's lifetime. For claude and codex agents the model may carry an `@effort` suffix — `low`/`medium`/`high`/`xhigh`/`max` — controlling reasoning depth (e.g. `opus@low`, `claude-fable-5-1@max`, `gpt-6-astra@xhigh`; bare `@max` = default model at that effort). Without a suffix Claude Code runs its default effort, `high`.

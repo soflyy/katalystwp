@@ -16,7 +16,7 @@
 import { route } from './http.js';
 import { systemHealth } from './health.js';
 import { AGENTS } from './claude.js';
-import { httpErr, validatePreset, normalizeTags } from './ops.js';
+import { httpErr, validatePreset, normalizeTags, checkPresetRequires } from './ops.js';
 
 const LATEST_PROTOCOL = '2025-06-18';
 const KNOWN_PROTOCOLS = new Set(['2025-06-18', '2025-03-26', '2024-11-05']);
@@ -98,10 +98,10 @@ export function buildMcpRoutes(config, registry, manager, sessions, presets, set
     {
       name: 'create_environment',
       category: 'Environments',
-      description: 'Create a WordPress environment (async — returns immediately; follow with wait_for_environment). Compose presets via presetIds (see list_presets); a single preset with no custom provision claims a pre-built warm env in seconds, otherwise a cold build takes ~10 min. Optional prompt starts an agent session automatically once the env is ready.',
+      description: 'Create a WordPress environment (async — returns immediately; follow with wait_for_environment). Compose presets via presetIds (see list_presets); a single preset with no custom provision claims a pre-built warm env in seconds, otherwise a cold build takes ~10 min. Optional prompt starts an agent session automatically once the env is ready (it is persisted on the env as initialPrompt; a failed env fires it on retry/start). A preset whose setup script fails no longer fails the env: the env comes up `running` with `setupWarnings` listing the failed presets — check them.',
       inputSchema: args({
         name: str('Environment name, ^[a-z0-9][a-z0-9-]{1,38}$, unique. Omit for an auto-generated one.'),
-        presetIds: { type: 'array', items: { type: 'string' }, description: 'Preset ids to compose, in order (from list_presets).' },
+        presetIds: { type: 'array', items: { type: 'string' }, description: 'Preset ids to compose, in order (from list_presets). A preset\'s `requires` dependencies are auto-included before it.' },
         prompt: str('Optional first agent prompt — starts a session automatically when the env becomes ready.'),
         model: MODEL_ARG,
         agent: str(`Agent for that first session: ${Object.keys(AGENTS).join(' | ')} (default claude).`),
@@ -231,7 +231,7 @@ export function buildMcpRoutes(config, registry, manager, sessions, presets, set
         defines: { type: 'object', description: 'wp-config PHP defines.' },
         appPorts: { type: 'array', items: { type: 'integer' }, description: 'Extra container ports to publish.' },
       }, ['name']),
-      handler: (body) => presets.create(validatePreset(body)),
+      handler: (body) => presets.create(checkPresetRequires(presets, validatePreset(body))),
     },
     {
       name: 'update_preset',
@@ -248,7 +248,7 @@ export function buildMcpRoutes(config, registry, manager, sessions, presets, set
         appPorts: { type: 'array', items: { type: 'integer' }, description: 'Extra container ports to publish.' },
       }, ['presetId', 'name']),
       handler: async ({ presetId, ...body }) => {
-        const rec = await presets.update(presetId, validatePreset(body));
+        const rec = await presets.update(presetId, checkPresetRequires(presets, validatePreset(body), presetId));
         if (!rec) throw httpErr(404, `preset "${presetId}" not found`);
         return rec;
       },
