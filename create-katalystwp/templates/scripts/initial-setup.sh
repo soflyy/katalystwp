@@ -36,6 +36,17 @@ done
 
 # Provisioning steps — each is an idempotent host-side script that runs WP-CLI
 # in the workspace container. Add more steps here as setup grows.
+# The wordpress container shadows the agents' credential dirs under /home/node
+# with empty tmpfs mounts (see docker-compose.yml). Docker creates any missing
+# mount point as root on the host side of the bind mount — which would lock the
+# node user (uid 1000) out of its own ~/.config, ~/.claude, ~/.local, … and break
+# gh login, Claude settings, pnpm, skills. Hand those dirs to node now, as root
+# inside the workspace container (works regardless of the host user's uid).
+docker compose exec -T -u root workspace sh -c '
+  cd /home/node &&
+  mkdir -p .config .claude .codex .cursor .local .ssh .agent-sandbox &&
+  chown node:node .config .claude .codex .cursor .local .ssh .agent-sandbox &&
+  chmod 700 .ssh'
 bash scripts/install-wp.sh
 bash scripts/apply-defines.sh
 bash scripts/run-setup-script.sh

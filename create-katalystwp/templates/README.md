@@ -100,6 +100,9 @@ A bare string is shorthand for `{ "source": "<string>", "activate": true }`. Aft
   wp plugin activate my-plugin
   ```
   The workspace root is mounted into the wordpress container at the same path, so Apache follows the symlink and serves the plugin live.
+  The agents' credential dirs in that root (`.config` with the GitHub token, `.claude`, `.codex`, `.cursor`,
+  `.local`, `.ssh`) are shadowed by empty tmpfs mounts inside the WordPress container, so no plugin,
+  theme, or PHP running on the site can read or plant files in them.
 # >>> agent:claude
 - **Claude login (auto):** `npm run claude` resolves your Claude token and logs you in automatically — no `/login`, landing straight at the prompt. It looks for the token in this order: `$CLAUDE_CODE_OAUTH_TOKEN` in your shell, then `$CLAUDE_SANDBOX_TOKEN_FILE`, then `~/.agent-sandbox/oauth-token` (the same file the standalone [agent-sandbox](https://github.com/louisreingold/agent-sandbox) uses — mint one on your host with `claude setup-token`). The token is forwarded by name (`docker compose exec -e CLAUDE_CODE_OAUTH_TOKEN`), so its value never lands on the command line, and the workspace's entrypoint pre-clears Claude's three first-run gates (login-method picker, `--dangerously-skip-permissions` warning, "trust this folder?" dialog) so an authenticated session isn't stopped by any onboarding screen. No token anywhere? Claude just starts and you `/login` once; that login persists in `workspace/` across rebuilds.
 # <<< agent:claude

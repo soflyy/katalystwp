@@ -71,6 +71,20 @@ services:
       # a plugin/theme you check out there and symlink into wp-content resolves
       # here too (Apache follows the symlink to /home/node/<your-checkout>).
       - ./workspace:/home/node
+    # The agents' credential/config dirs live in that same workspace home
+    # (gh's hosts.yml with the GitHub token, Claude/Codex/Cursor/OpenCode state).
+    # WordPress — i.e. any plugin, theme, or compromised PHP — must not be able
+    # to read or plant files there. Empty tmpfs mounts shadow those paths inside
+    # THIS container only: the workspace/dev containers still see the real dirs,
+    # and symlinked checkouts elsewhere under /home/node keep working.
+    tmpfs:
+      - /home/node/.config:mode=755,uid=1000,gid=1000
+      - /home/node/.claude:mode=755,uid=1000,gid=1000
+      - /home/node/.codex:mode=755,uid=1000,gid=1000
+      - /home/node/.cursor:mode=755,uid=1000,gid=1000
+      - /home/node/.local:mode=755,uid=1000,gid=1000
+      - /home/node/.ssh:mode=700,uid=1000,gid=1000
+      - /home/node/.agent-sandbox:mode=755,uid=1000,gid=1000
 
   # Isolated dev container: Node + Claude Code + Cursor CLI + PHP + WP-CLI +
   # Composer. This is where you run agents (Claude via `npm run claude`, Cursor
