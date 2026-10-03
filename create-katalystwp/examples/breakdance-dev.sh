@@ -5,7 +5,7 @@
 # It runs in the long-lived `dev` container (as `node`, with the same /home/node
 # mount as the workspace), kept alive by dev-supervisor for as long as the stack
 # is up. Here it runs Breakdance's watch task against the checkout the setup
-# script cloned at /home/node/breakdance.
+# script cloned at /home/node/src/breakdance.
 #
 # Pairs with breakdance-setup.sh:
 #   npm create katalystwp@latest my-breakdance -- \
@@ -16,7 +16,7 @@
 #     --activate=oxygen-elements,breakdance-elements,breakdance-main
 #
 # dev-supervisor restarts this if it exits, so if the checkout isn't there yet
-# (setup still running) it simply retries until /home/node/breakdance exists.
+# (setup still running) it simply retries until /home/node/src/breakdance exists.
 set -euo pipefail
 
-cd /home/node/breakdance && npm run dev:codespace
+cd /home/node/src/breakdance && npm run dev:codespace
