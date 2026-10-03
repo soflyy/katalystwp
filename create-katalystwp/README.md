@@ -175,7 +175,7 @@ The setup script runs with these variables, so it can wire URLs without hardcodi
   ```bash
   # host:  export SANDBOX_SETUP_ENV_MY_APP_DOTENV_BASE64="$(base64 -w0 .env)"
   # setup script:
-  printf '%s' "$MY_APP_DOTENV_BASE64" | base64 -d > /home/node/my-app/.env
+  printf '%s' "$MY_APP_DOTENV_BASE64" | base64 -d > /home/node/src/my-app/.env
   ```
 
 A worked example (Breakdance) lives in [`examples/`](examples/).
@@ -284,8 +284,8 @@ create({
     agents: ['claude'], // default agent selection for your brand (user can still override)
     defines: { WP_DEBUG: true, WP_MEMORY_LIMIT: '512M' },
     activate: ['oxygen-elements', 'breakdance-elements', 'breakdance-main'],
-    setupScript: 'set -euo pipefail\ncd /home/node\n# …clone/build/seed here…\n',
-    devScript: 'cd /home/node/breakdance && npm run dev\n',
+    setupScript: 'set -euo pipefail\nmkdir -p /home/node/src && cd /home/node/src\n# …clone/build/seed here…\n',
+    devScript: 'cd /home/node/src/breakdance && npm run dev\n',
   },
 });
 ```

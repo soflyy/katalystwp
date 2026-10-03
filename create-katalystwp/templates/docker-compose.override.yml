@@ -4,7 +4,7 @@
 #
 # It runs scripts/dev.sh in its own long-lived container — reusing the workspace
 # image, so it runs as the `node` user with the same /home/node mount (a checkout
-# your setup script cloned at /home/node/<repo> is visible here too). With
+# your setup script cloned at /home/node/src/<repo> is visible here too). With
 # restart: unless-stopped it's up for as long as the stack is, started/stopped by
 # `npm run start` / `npm run stop`. Watch it with `npm run dev:logs`.
 services:

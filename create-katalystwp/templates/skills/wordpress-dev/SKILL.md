@@ -10,7 +10,9 @@ This WordPress install is split across Docker containers on a shared network:
 
 - **workspace** — where you (Claude) run. You land in the workspace root
   (`/home/node`) with the WordPress files at `wp/` (shared with the `wordpress`
-  container), plus WP-CLI, Node, Composer, and Claude Code. No web server runs
+  container) and repo checkouts under `src/` (the only other dir the `wordpress`
+  container can see — symlink plugins/themes from there, never from elsewhere in
+  the home), plus WP-CLI, Node, Composer, and Claude Code. No web server runs
   here, but WP-CLI talks to the `db` container directly, so `wp …` works. This is
   your primary way to work: **run `wp …` directly in your shell** for any
   WordPress operation, and **edit the files under `wp/` directly** — you have

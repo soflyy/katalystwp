@@ -23,17 +23,18 @@ import { createMutex } from './registry.js';
 // workspace during setup); they differ only in BREAKDANCE_MODE and which plugins
 // they activate.
 const BREAKDANCE_SETUP_SCRIPT = `#!/usr/bin/env bash
-# Build Breakdance from source. Runs in the workspace as \`node\`, cwd /home/node,
+# Build Breakdance from source. Runs in the workspace as \`node\`; repo checkouts
+# live in /home/node/src (the only workspace dir the wordpress container mounts),
 # WordPress at /home/node/wp. Idempotent: skip the clone if present.
 set -euo pipefail
-cd /home/node
-if [ ! -d /home/node/breakdance ]; then
+mkdir -p /home/node/src && cd /home/node/src
+if [ ! -d /home/node/src/breakdance ]; then
   gh repo clone soflyy/breakdance
 fi
 # no-plugin-activate (soflyy/breakdance#9441): build + symlink, but DON'T let
 # setup.sh activate every breakdance plugin — the preset's own \`activate\` list
 # decides which ones go live.
-cd /home/node/breakdance && ./scripts/setup.sh --wp-root=/home/node/wp no-plugin-activate
+cd /home/node/src/breakdance && ./scripts/setup.sh --wp-root=/home/node/wp no-plugin-activate
 `;
 
 // Shared from-source dev constants; BREAKDANCE_MODE is set per preset. Applied
@@ -56,7 +57,7 @@ const BREAKDANCE_BASE_DEFINES = {
 // the setup script clones exists).
 const BREAKDANCE_DEV_SCRIPT = `#!/usr/bin/env bash
 set -euo pipefail
-cd /home/node/breakdance
+cd /home/node/src/breakdance
 npm run dev:codespace
 `;
 
@@ -82,7 +83,7 @@ if [ -n "\${SANDBOX_APP_PORT_3000:-}" ]; then
 fi
 
 if [ -n "\${LOCAL_DEV_APP_DOT_FUTURELAYER_DOT_ENV_FILE_CONTENTS_BASE64:-}" ]; then
-  if ! printf '%s' "\$LOCAL_DEV_APP_DOT_FUTURELAYER_DOT_ENV_FILE_CONTENTS_BASE64" | base64 -d > /home/node/breakdance/apps/app-dot-futurelayer/.env; then
+  if ! printf '%s' "\$LOCAL_DEV_APP_DOT_FUTURELAYER_DOT_ENV_FILE_CONTENTS_BASE64" | base64 -d > /home/node/src/breakdance/apps/app-dot-futurelayer/.env; then
     echo "ERROR: LOCAL_DEV_APP_DOT_FUTURELAYER_DOT_ENV_FILE_CONTENTS_BASE64 did not decode — is it valid base64 (base64 -w0 .env)?" >&2
     exit 1
   fi
@@ -91,7 +92,7 @@ else
   echo "WARNING: LOCAL_DEV_APP_DOT_FUTURELAYER_DOT_ENV_FILE_CONTENTS_BASE64 not set — the FutureLayer app will run without secrets"
 fi
 
-MU_SRC=/home/node/breakdance/.devcontainer/mu-plugin-canonical-upload-urls.php
+MU_SRC=/home/node/src/breakdance/.devcontainer/mu-plugin-canonical-upload-urls.php
 if [ -f "\$MU_SRC" ]; then
   mkdir -p /home/node/wp/wp-content/mu-plugins
   cp -f "\$MU_SRC" /home/node/wp/wp-content/mu-plugins/canonical-upload-urls.php
@@ -107,7 +108,7 @@ fi
 const AGENT_CONNECTOR_SETUP_SCRIPT = `#!/usr/bin/env bash
 set -euo pipefail
 SLUG=agent-connector-for-wp
-DEST=/home/node/$SLUG
+DEST=/home/node/src/$SLUG
 
 # Drop any release-zip copies, then check out the repo (idempotent: update if present).
 wp plugin delete "$SLUG" universal-abilities-plugin >/dev/null 2>&1 || true

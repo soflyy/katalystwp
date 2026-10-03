@@ -872,10 +872,10 @@ function NewEnvModal({ presets, onClose, onCreate, onSavePreset, onUpdatePreset,
         <details class="custom-prov" open=${showCustom} onToggle=${(e) => setShowCustom(e.target.open)}>
           <summary>${editing ? html`Editing preset — <strong>${presetName || 'untitled'}</strong>` : 'Custom provisioning (optional, applied after presets)'}</summary>
           <label>Setup script <span class="muted small">— runs once in the workspace as <code>node</code> (cwd /home/node, WordPress at ./wp)</span>
-            <textarea class="mono" rows="5" value=${setupScript} placeholder=${'#!/usr/bin/env bash\nset -euo pipefail\ncd /home/node\ngh repo clone owner/repo\n…'} onInput=${(e) => setSetupScript(e.target.value)}></textarea>
+            <textarea class="mono" rows="5" value=${setupScript} placeholder=${'#!/usr/bin/env bash\nset -euo pipefail\nmkdir -p /home/node/src && cd /home/node/src\ngh repo clone owner/repo\nln -s /home/node/src/repo /home/node/wp/wp-content/plugins/repo\n…'} onInput=${(e) => setSetupScript(e.target.value)}></textarea>
           </label>
           <label>Dev script <span class="muted small">— long-running; runs in the <code>dev</code> container for as long as the stack is up</span>
-            <textarea class="mono" rows="3" value=${devScript} placeholder=${'#!/usr/bin/env bash\ncd /home/node/breakdance\nnpm run dev:codespace'} onInput=${(e) => setDevScript(e.target.value)}></textarea>
+            <textarea class="mono" rows="3" value=${devScript} placeholder=${'#!/usr/bin/env bash\ncd /home/node/src/breakdance\nnpm run dev:codespace'} onInput=${(e) => setDevScript(e.target.value)}></textarea>
           </label>
           <label>wp-config defines <span class="muted small">— JSON object; booleans/numbers become raw PHP literals</span>
             <textarea class="mono" rows="3" value=${definesText} placeholder=${'{\n  "WP_DEBUG": true,\n  "WP_MEMORY_LIMIT": "512M"\n}'} onInput=${(e) => setDefinesText(e.target.value)}></textarea>

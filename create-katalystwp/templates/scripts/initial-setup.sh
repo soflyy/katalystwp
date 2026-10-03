@@ -36,6 +36,11 @@ done
 
 # Provisioning steps — each is an idempotent host-side script that runs WP-CLI
 # in the workspace container. Add more steps here as setup grows.
+# workspace/src (repo checkouts — the only workspace dir the wordpress container
+# mounts) is a bind-mount source: Docker creates it as root on the host if it is
+# missing, which would lock the node user (uid 1000) out of it. Hand it to node
+# as root inside the workspace container — works regardless of the host uid.
+docker compose exec -T -u root workspace sh -c 'mkdir -p /home/node/src && chown node:node /home/node/src'
 bash scripts/install-wp.sh
 bash scripts/apply-defines.sh
 bash scripts/run-setup-script.sh

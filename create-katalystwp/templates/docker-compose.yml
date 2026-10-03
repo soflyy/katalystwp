@@ -67,10 +67,14 @@ services:
     volumes:
       - ./workspace/wp:/var/www/html
       - ./php/php.ini:/usr/local/etc/php/conf.d/php.ini:ro   # custom PHP overrides (upload limits, etc.)
-      # Mount the workspace root at the same path the workspace container uses, so
-      # a plugin/theme you check out there and symlink into wp-content resolves
-      # here too (Apache follows the symlink to /home/node/<your-checkout>).
-      - ./workspace:/home/node
+      # Repo checkouts live in workspace/src (= /home/node/src in the workspace
+      # container). Mount ONLY that dir here, at the same path, so a plugin/theme
+      # you check out there and symlink into wp-content resolves for Apache too.
+      # Deliberately NOT the whole workspace home: it holds the agents'
+      # credentials and config (~/.config/gh, ~/.claude, …), and code running in
+      # WordPress — any plugin, theme, or compromised PHP — must not be able to
+      # read or plant files there. WordPress sees its own tree and src/, nothing else.
+      - ./workspace/src:/home/node/src
 
   # Isolated dev container: Node + Claude Code + Cursor CLI + PHP + WP-CLI +
   # Composer. This is where you run agents (Claude via `npm run claude`, Cursor

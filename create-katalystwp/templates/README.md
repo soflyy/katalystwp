@@ -91,15 +91,15 @@ A bare string is shorthand for `{ "source": "<string>", "activate": true }`. Aft
 ## Notes
 
 - **Working on a plugin/theme?** Installed ones live at `workspace/wp/wp-content/plugins/…` (or `themes/…`) on your machine — `wp/wp-content/…` from inside the workspace container. Edit them either place — same files, served live.
-- **Developing a plugin/theme from its own repo?** You land in the workspace root (`/home/node`) with WordPress nested at `wp/`, so check it out as a sibling of `wp` and symlink it into place — keeping your repo out of the WordPress tree:
+- **Developing a plugin/theme from its own repo?** You land in the workspace root (`/home/node`) with WordPress nested at `wp/`. Check repos out under `src/` and symlink them into place — keeping your repo out of the WordPress tree:
   ```bash
   npm run bash                                  # land in the workspace root
-  git clone <your-plugin-repo> my-plugin        # checked out next to wp/, not inside it
-  composer install -d my-plugin                 # Composer is available globally
-  ln -s /home/node/my-plugin wp/wp-content/plugins/my-plugin
+  git clone <your-plugin-repo> src/my-plugin    # checked out under src/, not inside wp/
+  composer install -d src/my-plugin             # Composer is available globally
+  ln -s /home/node/src/my-plugin wp/wp-content/plugins/my-plugin
   wp plugin activate my-plugin
   ```
-  The workspace root is mounted into the wordpress container at the same path, so Apache follows the symlink and serves the plugin live.
+  `src/` is the one workspace directory also mounted into the wordpress container (at the same path), so Apache follows the symlink and serves the plugin live. Nothing else in the workspace home — your agent credentials and config in particular — is visible to WordPress, so a checkout anywhere else won't resolve from the site.
 # >>> agent:claude
 - **Claude login (auto):** `npm run claude` resolves your Claude token and logs you in automatically — no `/login`, landing straight at the prompt. It looks for the token in this order: `$CLAUDE_CODE_OAUTH_TOKEN` in your shell, then `$CLAUDE_SANDBOX_TOKEN_FILE`, then `~/.agent-sandbox/oauth-token` (the same file the standalone [agent-sandbox](https://github.com/louisreingold/agent-sandbox) uses — mint one on your host with `claude setup-token`). The token is forwarded by name (`docker compose exec -e CLAUDE_CODE_OAUTH_TOKEN`), so its value never lands on the command line, and the workspace's entrypoint pre-clears Claude's three first-run gates (login-method picker, `--dangerously-skip-permissions` warning, "trust this folder?" dialog) so an authenticated session isn't stopped by any onboarding screen. No token anywhere? Claude just starts and you `/login` once; that login persists in `workspace/` across rebuilds.
 # <<< agent:claude

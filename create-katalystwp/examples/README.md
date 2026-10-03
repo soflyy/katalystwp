@@ -13,7 +13,7 @@ them from the repo root, or copy them next to your own project and adapt.
   (booleans/numbers become raw PHP literals; strings are quoted).
 - **`breakdance-dev.sh`** — a `--dev-script`: runs in the long-lived `dev`
   container for as long as the stack is up (here, Breakdance's `npm run dev`
-  watch task against the `/home/node/breakdance` checkout).
+  watch task against the `/home/node/src/breakdance` checkout).
 
 ## Run it
 
