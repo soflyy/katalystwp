@@ -8,7 +8,7 @@ import { readFile, rm } from 'node:fs/promises';
 import { exec } from './docker.js';
 import { log } from './log.js';
 import { AGENTS } from './claude.js';
-import { composeProvision } from './provision.js';
+import { composeProvision, expandPresetIds } from './provision.js';
 
 export function httpErr(status, message) {
   const e = new Error(message);
@@ -101,7 +101,19 @@ export function validateProvisionFields(body = {}) {
 export function validatePreset(body = {}) {
   const name = String((body && body.name) || '').trim();
   if (!name) throw httpErr(400, 'preset name is required');
-  return { name, description: typeof body.description === 'string' ? body.description : '', ...validateProvisionFields(body) };
+  const requires = Array.isArray(body.requires)
+    ? [...new Set(body.requires.filter((s) => typeof s === 'string' && s.trim()).map((s) => s.trim()))]
+    : [];
+  return { name, description: typeof body.description === 'string' ? body.description : '', requires, ...validateProvisionFields(body) };
+}
+
+// `requires` must name existing presets, and a preset can't require itself.
+export function checkPresetRequires(presets, data, selfId = null) {
+  for (const id of data.requires || []) {
+    if (id === selfId) throw httpErr(400, 'a preset cannot require itself');
+    if (!presets.get(id)) throw httpErr(400, `requires: unknown preset "${id}"`);
+  }
+  return data;
 }
 
 // Custom (ad-hoc) provision fields for a create. Returns null when nothing was
@@ -262,12 +274,13 @@ export function buildOps(config, registry, manager, sessions, presets) {
   // pre-built env (seconds) instead of building (~10m). Async either way — the
   // caller polls until `running`. Throws AllocationError on capacity/name issues.
   const createEnvironment = async (body = {}) => {
-    const presetIds = Array.isArray(body.presetIds) ? body.presetIds : [];
-    const selected = presetIds.map((pid) => {
-      const p = presets.get(pid);
-      if (!p) throw httpErr(400, `unknown preset "${pid}"`);
-      return p;
-    });
+    // Expand `requires` so a preset's dependencies are provisioned before it
+    // (e.g. Sidekick (dev) → Agent Connector (dev) first) even if the caller
+    // only named the dependent.
+    let presetIds;
+    try { presetIds = expandPresetIds(Array.isArray(body.presetIds) ? body.presetIds : [], (id) => presets.get(id)); }
+    catch (err) { throw httpErr(err.status || 400, err.message); }
+    const selected = presetIds.map((pid) => presets.get(pid));
     const custom = normalizeProvision(body.provision);
     const provision = composeProvision(selected, custom);
     const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';

@@ -8,7 +8,7 @@ import { systemHealth } from './health.js';
 import { AGENTS } from './claude.js';
 import { AllocationError } from './allocator.js';
 import { composeProvision } from './provision.js';
-import { httpErr, validatePreset, normalizeTags } from './ops.js';
+import { httpErr, validatePreset, normalizeTags, checkPresetRequires } from './ops.js';
 import { openSse } from './sse.js';
 import { makeStaticHandler } from './static.js';
 
@@ -131,11 +131,11 @@ export function buildRoutes(config, registry, manager, sessions, presets, settin
     // ---- provisioning presets (saved blueprints, stored in the data dir) ---
     route('GET', '/presets', async (ctx) => ctx.send(200, { presets: presets.list() })),
     route('POST', '/presets', async (ctx) => {
-      const rec = await presets.create(validatePreset(ctx.body));
+      const rec = await presets.create(checkPresetRequires(presets, validatePreset(ctx.body)));
       ctx.send(201, rec);
     }),
     route('PUT', '/presets/:id', async (ctx) => {
-      const rec = await presets.update(ctx.params.id, validatePreset(ctx.body));
+      const rec = await presets.update(ctx.params.id, checkPresetRequires(presets, validatePreset(ctx.body), ctx.params.id));
       if (!rec) throw httpErr(404, `preset "${ctx.params.id}" not found`);
       ctx.send(200, rec);
     }),

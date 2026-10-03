@@ -264,3 +264,9 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; font: 12.5px/1.5
   .env-actions { gap: 16px; }
   .lnk { padding: 4px 0; }
 }
+
+/* setup finished but some preset scripts failed (env row) */
+.badge.warn { color: var(--warn, #e0a640); border-color: currentColor; }
+/* compact preset checkbox list (preset editor "Requires") */
+.preset-list.compact { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 4px; }
+.preset-list.compact .preset-check { padding: 0; }

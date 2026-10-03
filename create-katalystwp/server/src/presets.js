@@ -272,6 +272,10 @@ function sanitize(input = {}) {
     activate: Array.isArray(input.activate)
       ? input.activate.filter((s) => typeof s === 'string' && s.trim()).map((s) => s.trim())
       : [],
+    // Other preset ids this one depends on; auto-included (before it) on create.
+    requires: Array.isArray(input.requires)
+      ? [...new Set(input.requires.filter((s) => typeof s === 'string' && s.trim()).map((s) => s.trim()))]
+      : [],
     appPorts: Array.isArray(input.appPorts)
       ? [...new Set(input.appPorts.map((p) => parseInt(p, 10)).filter((p) => Number.isInteger(p) && p >= 1 && p <= 65535))]
       : [],
