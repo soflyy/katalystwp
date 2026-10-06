@@ -1427,4 +1427,8 @@ function App() {
     </div>`;
 }
 
-render(html`<${App} />`, document.getElementById('root'));
+// Clear the static "Loading…" placeholder: render() diffs against existing
+// children rather than replacing them, so it would stay below the app.
+const root = document.getElementById('root');
+root.textContent = '';
+render(html`<${App} />`, root);
