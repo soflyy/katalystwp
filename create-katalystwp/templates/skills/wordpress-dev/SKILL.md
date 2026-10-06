@@ -2,8 +2,9 @@
 name: wordpress-dev
 description: >-
   The sandbox's Docker containers (workspace, db, wordpress, playwright) and how
-  to reach the WordPress site — http://wordpress from inside the network, not
-  localhost. Load when working with this WordPress install or browsing it.
+  to reach the WordPress site — http://wordpress from inside the network, and
+  the public address the user opens in their browser. Load when working with
+  this WordPress install or browsing it.
 ---
 
 This WordPress install is split across Docker containers on a shared network:
@@ -30,9 +31,13 @@ This WordPress install is split across Docker containers on a shared network:
 
 **Reaching the site:** from inside any container (including the Playwright
 browser) use `http://wordpress/`, e.g. `http://wordpress/wp-login.php`.
-`http://localhost:__WP_PORT__` only works from the user's browser on the host —
-it's a host port mapping, not reachable container-to-container. The wp-admin
-login is `admin` / `password`.
+The user opens the site in their own browser at
+`__PUBLIC_SCHEME__://__PUBLIC_HOST__:__WP_PORT__` (wp-admin at
+`__PUBLIC_SCHEME__://__PUBLIC_HOST__:__WP_PORT__/wp-admin/`); give them that
+address. It's a published host port, not reachable container-to-container.
+WordPress takes its address from the request host (`WP_HOME` in wp-config), so
+both addresses work as-is: don't change `siteurl`/`home` or suggest a tunnel.
+The wp-admin login is `__WP_ADMIN_USER__` / `__WP_ADMIN_PASSWORD__`.
 
 ## Agent Connector for WP
 
