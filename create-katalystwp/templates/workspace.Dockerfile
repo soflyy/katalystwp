@@ -1,9 +1,10 @@
 FROM node:24-bookworm-slim
 
-# PHP + the extensions WP-CLI needs (mysql for DB, curl/zip for installs, etc.)
-# plus the mysql client for `wp db ...`, git, and curl for general use.
+# PHP + the extensions WP-CLI needs (mysql for DB, curl/zip for installs, etc.;
+# sqlite3 for plugins that keep SQLite files, e.g. search indexes) plus the
+# mysql client for `wp db ...`, git, and curl for general use.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        php-cli php-mysql php-curl php-xml php-mbstring php-zip \
+        php-cli php-mysql php-sqlite3 php-curl php-xml php-mbstring php-zip \
         default-mysql-client curl ca-certificates git \
     && rm -rf /var/lib/apt/lists/*
 

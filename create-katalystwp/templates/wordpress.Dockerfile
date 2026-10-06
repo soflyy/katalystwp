@@ -9,3 +9,8 @@ FROM wordpress:latest
 # uid 1000 — consistent with the workspace and the bind-mounted host dir.
 RUN groupadd -g 1000 devbox \
     && useradd -u 1000 -g 1000 -M -s /usr/sbin/nologin devbox
+
+# The stock image ships mysqli but not PDO MySQL, which plugins that talk to the
+# database through PDO need (e.g. Elevated Product Search, whose TNTSearch
+# indexer reads products over PDO MySQL and writes the index with pdo_sqlite).
+RUN docker-php-ext-install pdo_mysql
