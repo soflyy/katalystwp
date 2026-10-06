@@ -181,7 +181,7 @@ export function buildRoutes(config, registry, manager, sessions, presets, settin
       await assertUsable(env);
       const prompt = (ctx.body.prompt || '').trim();
       if (!prompt) throw httpErr(400, 'prompt is required');
-      await sessions.engine.sendMessage(env, s, { prompt });
+      await sessions.engine.sendMessage(env, s, { prompt, effort: ctx.body.effort });
       ctx.send(202, publicSession(sessions.store.get(s.id)));
     }),
 
