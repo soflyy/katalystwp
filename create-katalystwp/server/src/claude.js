@@ -239,6 +239,10 @@ export class ClaudeEngine {
   async newSession(env, { prompt, model, agent } = {}) {
     const name = AGENTS[agent] ? agent : 'claude';
     const id = `sess_${randomBytes(5).toString('hex')}`;
+    // A bare "@effort" means the default model at that effort, so resolve the
+    // default here rather than letting the agent CLI pick its own.
+    const split = splitModelEffort(model);
+    const base = split.model || agentFor(name).defaultModel(this.config);
     const record = {
       id,
       envId: env.id,
@@ -246,7 +250,7 @@ export class ClaudeEngine {
       agent: name,
       claudeSessionId: null, // the agent's own resume id (claude session_id / codex thread_id)
       cwd: AGENT_CWD,
-      model: model || agentFor(name).defaultModel(this.config) || null,
+      model: split.effort ? `${base || ''}@${split.effort}` : (base || null),
       title: title(prompt),
       status: 'running',
       turnCount: 0,
@@ -263,9 +267,12 @@ export class ClaudeEngine {
   }
 
   // Continue an existing session (resume). Caller ensures it isn't already running.
-  async sendMessage(env, session, { prompt }) {
+  async sendMessage(env, session, { prompt, effort }) {
     await this.store.update(session.id, { status: 'running', lastActivityAt: new Date().toISOString() });
-    this._runTurn(env, { ...session, status: 'running' }, prompt);
+    // A per-message effort overrides the session's @effort for this turn only.
+    let model = session.model;
+    if (EFFORT_LEVELS.has(effort) && session.agent !== 'opencode') model = `${splitModelEffort(model).model || ''}@${effort}`;
+    this._runTurn(env, { ...session, status: 'running', model }, prompt);
   }
 
   _runTurn(env, session, prompt) {

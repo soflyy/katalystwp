@@ -2,6 +2,8 @@
 import { h, render } from 'https://esm.sh/preact@10.24.3';
 import { useState, useEffect, useRef, useCallback } from 'https://esm.sh/preact@10.24.3/hooks';
 import htm from 'https://esm.sh/htm@3.1.1';
+import { marked } from 'https://esm.sh/marked@18.1.0';
+import DOMPurify from 'https://esm.sh/dompurify@3.4.16';
 const html = htm.bind(h);
 
 // ---- API ------------------------------------------------------------------
@@ -65,7 +67,7 @@ function reduce(items, partialRef, evt) {
     case 'user': {
       const content = (evt.message && evt.message.content) || [];
       for (const b of content) {
-        if (b.type === 'tool_result') push({ kind: 'tool_result', content: b.content });
+        if (b.type === 'tool_result') push({ kind: 'tool_result', content: b.content, isError: !!b.is_error });
       }
       break;
     }
@@ -78,7 +80,7 @@ function reduce(items, partialRef, evt) {
       if (String(evt.text || '').trim()) push({ kind: 'stderr', text: evt.text });
       break;
     case 'control':
-      if (evt.subtype === 'turn-start') push({ kind: 'control', text: '— turn —' });
+      if (evt.subtype === 'turn-start') push({ kind: 'control', text: 'Turn' });
       if (evt.subtype === 'turn-end') partialRef.text = '';
       break;
     case 'raw':
@@ -92,6 +94,54 @@ function StatusDot({ status }) {
   return html`<span class="dot ${status}" title=${status}></span>`;
 }
 
+// Inline line icons (Lucide, ISC license), so every glyph renders the same on
+// every OS instead of mixing color emoji with font symbols.
+const ICONS = {
+  activity: '<path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/>',
+  settings: '<path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/>',
+  x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  menu: '<path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h16"/>',
+  plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
+  more: '<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>',
+  right: '<path d="m9 18 6-6-6-6"/>',
+  down: '<path d="m6 9 6 6 6-6"/>',
+  external: '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+  trash: '<path d="M10 11v6"/><path d="M14 11v6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
+  archive: '<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>',
+  restore: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
+  pencil: '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>',
+  terminal: '<path d="M12 19h8"/><path d="m4 17 6-6-6-6"/>',
+  output: '<path d="m15 10 5 5-5 5"/><path d="M4 4v7a4 4 0 0 0 4 4h12"/>',
+  alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+};
+function Icon({ name, size = 14 }) {
+  return html`<svg class="icon" width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" dangerouslySetInnerHTML=${{ __html: ICONS[name] || '' }}></svg>`;
+}
+
+// Small dropdown for a row's secondary actions. Closes on outside click / Escape.
+function ActionMenu({ items }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
+  }, [open]);
+  return html`
+    <div class="menu-wrap" ref=${ref}>
+      <button class="btn icon ghost" title="More actions" aria-haspopup="menu" aria-expanded=${open} onClick=${(e) => { e.stopPropagation(); setOpen(!open); }}><${Icon} name="more" /></button>
+      ${open && html`
+        <div class="menu" role="menu">
+          ${items.filter(Boolean).map((it) => html`
+            <button role="menuitem" class=${`menu-item ${it.danger ? 'danger' : ''}`} key=${it.label} title=${it.title || ''}
+              onClick=${(e) => { e.stopPropagation(); setOpen(false); it.onClick(); }}>${it.label}</button>`)}
+        </div>`}
+    </div>`;
+}
+
 const TRANSIENT_ENV = ['scaffolding', 'setting-up', 'configuring', 'destroying', 'duplicating'];
 
 function EnvRow({ env, onAction, onTag }) {
@@ -101,32 +151,38 @@ function EnvRow({ env, onAction, onTag }) {
   // server's localhost wpUrl) — so it works from a phone/laptop hitting the
   // server's IP, and still works from inside the devbox via localhost.
   const wpUrl = envSiteUrl(env, env.port);
+  const warnings = env.setupWarnings || [];
+  const act = (a) => () => onAction(a, env);
   return html`
     <div class="env">
       <div class="env-top">
         <${StatusDot} status=${env.status} /> <span class="env-name" title=${env.displayName ? `${env.displayName} · ${env.name}` : env.name}>${env.displayName || env.name}</span>
-        ${env.preset && html`<span class="badge" title="provisioned from preset">${env.preset}</span>`}
-        ${(env.setupWarnings || []).length > 0 && html`<span class="badge warn" title=${`Setup finished, but these presets' scripts failed: ${env.setupWarnings.join(', ')} — open logs`}>⚠ ${env.setupWarnings.length} preset${env.setupWarnings.length > 1 ? 's' : ''} failed</span>`}
-        ${(env.tags || []).map((t) => html`<button class="tag-chip" key=${t} title=${`Filter by tag "${t}"`} onClick=${(e) => { e.stopPropagation(); onTag && onTag(t); }}>#${t}</button>`)}
         <a class="env-port" href=${wpUrl} target="_blank" rel="noreferrer" title="Open the site front end" onClick=${(e) => e.stopPropagation()}>:${env.port}</a>
-        ${(env.appPorts || []).map((p) => html`<a class="env-port" href=${envSiteUrl(env, p.host)} target="_blank" rel="noreferrer" title=${`App port → container :${p.container}`} onClick=${(e) => e.stopPropagation()}>:${p.host}<span class="muted small">→${p.container}</span></a>`)}
-        ${up && html`<button class="env-admin lnk" title="One-click passwordless wp-admin login" onClick=${(e) => { e.stopPropagation(); onAction('admin-login', env); }}>admin ↗</button>`}
+        ${(env.appPorts || []).map((p) => html`<a class="env-port" href=${envSiteUrl(env, p.host)} target="_blank" rel="noreferrer" title=${`App port → container :${p.container}`} onClick=${(e) => e.stopPropagation()}>:${p.host}</a>`)}
+        ${up && html`<button class="env-admin" title="One-click passwordless wp-admin login" onClick=${(e) => { e.stopPropagation(); onAction('admin-login', env); }}>Admin <${Icon} name="external" size=${12} /></button>`}
       </div>
-      <div class="env-actions">
-        ${building
-          ? html`<span class="muted small">${env.status}…</span>
-            <button class="lnk" onClick=${() => onAction('logs', env)}>logs</button>`
-          : html`
-            ${up && html`<button class="lnk" onClick=${() => onAction('session', env)}>+ session</button>`}
-            ${up && html`<button class="lnk" onClick=${() => onAction('stop', env)}>stop</button>`}
-            ${up && html`<button class="lnk" title="Update the Claude Code / Codex / OpenCode CLIs inside this env (npm -g @latest). Needed for new models like Opus 5.5." onClick=${() => onAction('update-agents', env)}>update agents</button>`}
-            ${env.status === 'stopped' && html`<button class="lnk" onClick=${() => onAction('start', env)}>start</button>`}
-            ${env.status === 'failed' && html`<button class="lnk" title=${env.initialPrompt && !env.initialPromptFiredAt ? 'Start the containers and fire the saved first prompt' : 'Start the containers again'} onClick=${() => onAction('start', env)}>retry</button>`}
-            ${(up || env.status === 'stopped') && html`<button class="lnk" title="Clone this environment (full data copy on a new port)" onClick=${() => onAction('duplicate', env)}>duplicate</button>`}
-            <button class="lnk" onClick=${() => onAction('rename', env)}>rename</button>
-            <button class="lnk" onClick=${() => onAction('ssh', env)} title="Copy a command to open a shell / interactive Claude on the box">ssh</button>
-            <button class="lnk" onClick=${() => onAction('logs', env)}>logs</button>
-            <button class="lnk danger" onClick=${() => onAction('delete', env)}>delete</button>`}
+      <div class="env-meta">
+        ${env.preset && html`<span class="badge" title="provisioned from preset">${env.preset}</span>`}
+        ${warnings.length > 0 && html`<button class="badge warn" title=${`Setup finished, but these presets' scripts failed: ${warnings.join(', ')}. Open the logs.`} onClick=${act('logs')}><${Icon} name="alert" size=${11} /> ${warnings.length} preset${warnings.length > 1 ? 's' : ''} failed</button>`}
+        ${(env.tags || []).map((t) => html`<button class="tag-chip" key=${t} title=${`Filter by tag "${t}"`} onClick=${(e) => { e.stopPropagation(); onTag && onTag(t); }}>#${t}</button>`)}
+        <span class="env-actions">
+          ${building
+            ? html`<span class="muted small">${env.status}…</span>
+              <button class="lnk" onClick=${act('logs')}>Logs</button>`
+            : html`
+              ${up && html`<button class="lnk" onClick=${act('session')}><${Icon} name="plus" size=${12} /> Session</button>`}
+              ${env.status === 'stopped' && html`<button class="lnk" onClick=${act('start')}>Start</button>`}
+              ${env.status === 'failed' && html`<button class="lnk" title=${env.initialPrompt && !env.initialPromptFiredAt ? 'Start the containers and fire the saved first prompt' : 'Start the containers again'} onClick=${act('start')}>Retry</button>`}
+              <${ActionMenu} items=${[
+                up && { label: 'Stop', onClick: act('stop') },
+                up && { label: 'Update agents', title: 'Update the Claude Code / Codex / OpenCode CLIs inside this env (npm -g @latest). Needed for new models like Opus 5.5.', onClick: act('update-agents') },
+                (up || env.status === 'stopped') && { label: 'Duplicate', title: 'Clone this environment (full data copy on a new port)', onClick: act('duplicate') },
+                { label: 'Rename & tag', onClick: act('rename') },
+                { label: 'SSH', title: 'Copy a command to open a shell / interactive Claude on the box', onClick: act('ssh') },
+                { label: 'Setup logs', onClick: act('logs') },
+                { label: 'Delete', danger: true, onClick: act('delete') },
+              ]} />`}
+        </span>
       </div>
     </div>`;
 }
@@ -148,15 +204,36 @@ function SessionItem({ s, selectedId, onSelect, onDelete, onArchive, onRestore, 
           ? html`<${WorkingTag} since=${s.lastActivityAt} now=${now} />`
           : html`<span class="sess-time" title=${`last active ${fullTime(s.lastActivityAt)}`}>${fmtAgo(s.lastActivityAt)}</span>`}
         ${s.archived
-          ? html`<button class="sess-arch lnk" title="Restore session" onClick=${(e) => { e.stopPropagation(); onRestore(s); }}>↩</button>`
-          : html`<button class="sess-arch lnk" title="Archive session (hide, keep transcript)" onClick=${(e) => { e.stopPropagation(); onArchive(s); }}>🗄</button>`}
-        <button class="sess-del lnk" title="Delete session" onClick=${(e) => { e.stopPropagation(); onDelete(s); }}>🗑</button>
+          ? html`<button class="sess-arch lnk" title="Restore session" onClick=${(e) => { e.stopPropagation(); onRestore(s); }}><${Icon} name="restore" size=${13} /></button>`
+          : html`<button class="sess-arch lnk" title="Archive session (hide, keep transcript)" onClick=${(e) => { e.stopPropagation(); onArchive(s); }}><${Icon} name="archive" size=${13} /></button>`}
+        <button class="sess-del lnk" title="Delete session" onClick=${(e) => { e.stopPropagation(); onDelete(s); }}><${Icon} name="trash" size=${13} /></button>
       </div>
       <div class="sess-sub muted"><span class="agent-tag">${agentLabel(s.agent)}</span> · started ${fmtAgo(s.createdAt, true)} · ${s.turnCount} turn${s.turnCount === 1 ? '' : 's'} · $${(s.costUsd || 0).toFixed(3)}</div>
     </div>`;
 }
 
-function Sidebar({ sessions, envs, selectedId, now, onSelect, onNewEnv, onEnvAction, onSettings, onHealth, onCloseDrawer, onDeleteSession, onArchiveSession, onRestoreSession }) {
+// The devbox's name in the sidebar header; click to rename (saved in settings).
+function BoxName({ name, onRename }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const cancelled = useRef(false);
+  // Enter and Escape both end the edit by blurring, so it saves (or not) once.
+  const finish = () => {
+    const t = draft.replace(/\s+/g, ' ').trim();
+    setEditing(false);
+    if (!cancelled.current && t && t !== name) onRename(t);
+    cancelled.current = false;
+  };
+  return editing
+    ? html`<input class="rename box-name-input" value=${draft} maxLength="40"
+        ref=${(el) => { if (el && document.activeElement !== el) { el.focus(); el.select(); } }}
+        onInput=${(e) => setDraft(e.target.value)}
+        onKeyDown=${(e) => { if (e.key === 'Enter') e.target.blur(); else if (e.key === 'Escape') { cancelled.current = true; e.target.blur(); } }}
+        onBlur=${finish} />`
+    : html`<button class="box-name" title="Rename" onClick=${() => { setDraft(name); setEditing(true); }}>${name}</button>`;
+}
+
+function Sidebar({ name, onRename, sessions, envs, selectedId, now, onSelect, onNewEnv, onEnvAction, onSettings, onHealth, onCloseDrawer, onDeleteSession, onArchiveSession, onRestoreSession }) {
   const [expanded, setExpanded] = useState(() => new Set());
   // Which envs currently have their "Archived (N)" reveal expanded.
   const [archOpen, setArchOpen] = useState(() => new Set());
@@ -237,15 +314,15 @@ function Sidebar({ sessions, envs, selectedId, now, onSelect, onNewEnv, onEnvAct
   return html`
     <aside class="sidebar">
       <div class="side-head">
-        <strong>Devbox</strong>
+        <${BoxName} name=${name} onRename=${onRename} />
         <div class="side-head-btns">
-          <button class="btn small ghost" onClick=${onHealth} title="System health">📊</button>
-          <button class="btn small ghost" onClick=${onSettings} title="Settings">⚙</button>
-          <button class="mobile-only btn small ghost" onClick=${onCloseDrawer} title="Close">✕</button>
+          <button class="btn icon ghost" onClick=${onHealth} title="System health"><${Icon} name="activity" /></button>
+          <button class="btn icon ghost" onClick=${onSettings} title="Settings"><${Icon} name="settings" /></button>
+          <button class="mobile-only btn icon ghost" onClick=${onCloseDrawer} title="Close"><${Icon} name="x" /></button>
         </div>
       </div>
       <div class="side-section grow">
-        <div class="section-head"><span>Environments</span><button class="btn small" onClick=${onNewEnv}>+ Env</button></div>
+        <div class="section-head"><span>Environments</span><button class="btn small" onClick=${onNewEnv}><${Icon} name="plus" size=${13} /> Env</button></div>
         <div class="env-filter">
           <button class=${`seg ${filter === 'active' ? 'on' : ''}`} onClick=${() => setFilter('active')}>Active ${activeCount}</button>
           <button class=${`seg ${filter === 'stopped' ? 'on' : ''}`} onClick=${() => setFilter('stopped')}>Stopped ${stoppedCount}</button>
@@ -265,7 +342,7 @@ function Sidebar({ sessions, envs, selectedId, now, onSelect, onNewEnv, onEnvAct
           ${groups.map(([groupKey, groupEnvs]) => html`
             ${groupKey !== null && html`
               <button class="group-head" key=${`h:${groupKey}`} onClick=${() => toggleGroup(groupKey)}>
-                <span class="chev">${collapsed.has(groupKey) ? '▸' : '▾'}</span>
+                <span class="chev"><${Icon} name=${collapsed.has(groupKey) ? 'right' : 'down'} size=${12} /></span>
                 ${groupBy === 'tag' && groupKey !== 'untagged' ? `#${groupKey}` : groupKey}
                 <span class="muted small">${groupEnvs.length}</span>
               </button>`}
@@ -284,7 +361,7 @@ function Sidebar({ sessions, envs, selectedId, now, onSelect, onNewEnv, onEnvAct
                 <div class="env-group" key=${groupKey === null ? e.id : `${groupKey}:${e.id}`}>
                   <${EnvRow} env=${e} onAction=${onEnvAction} onTag=${setQuery} />
                   <button class="sess-toggle" onClick=${() => toggle(e.id)}>
-                    <span class="chev">${open ? '▾' : '▸'}</span>
+                    <span class="chev"><${Icon} name=${open ? 'down' : 'right'} size=${12} /></span>
                     ${active.length} session${active.length === 1 ? '' : 's'}
                     ${archived.length > 0 && html`<span class="muted small"> · ${archived.length} archived</span>`}
                   </button>
@@ -295,7 +372,7 @@ function Sidebar({ sessions, envs, selectedId, now, onSelect, onNewEnv, onEnvAct
                       ${active.map((s) => html`<${SessionItem} ...${itemProps} s=${s} key=${s.id} />`)}
                       ${archived.length > 0 && html`
                         <button class="arch-toggle" onClick=${() => toggleArch(e.id)}>
-                          <span class="chev">${showArch ? '▾' : '▸'}</span>
+                          <span class="chev"><${Icon} name=${showArch ? 'down' : 'right'} size=${12} /></span>
                           Archived (${archived.length})
                         </button>`}
                       ${showArch && archived.map((s) => html`<${SessionItem} ...${itemProps} s=${s} key=${s.id} />`)}
@@ -315,19 +392,69 @@ function clipText(t, max = 20000) {
   return s.length > max ? `${s.slice(0, max)}\n…[+${(s.length - max).toLocaleString()} chars clipped]` : s;
 }
 
+// One-line preview of a tool call / result for its collapsed row.
+const oneLine = (t, max = 110) => {
+  const line = String(t ?? '').split('\n').map((l) => l.trim()).find(Boolean) || '';
+  return line.length > max ? `${line.slice(0, max)}…` : line;
+};
+// Tool results are a string or a list of content blocks; show the blocks' text.
+function resultText(content) {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return JSON.stringify(content, null, 2);
+  return content.map((b) => {
+    if (b && b.type === 'text') return b.text;
+    if (b && b.type === 'image') return '[image]';
+    if (b && b.type === 'tool_reference') return b.tool_name;
+    return JSON.stringify(b, null, 2);
+  }).join('\n');
+}
+// Result preview: the first line that isn't a markdown heading or code fence,
+// minus list markers.
+function resultPreview(text) {
+  const lines = String(text ?? '').split('\n').map((l) => l.trim()).filter(Boolean);
+  const line = lines.find((l) => !l.startsWith('#') && !l.startsWith('```')) || lines[0] || '';
+  return oneLine(line.replace(/^[-*]\s+/, ''));
+}
+function toolPreview(input) {
+  if (!input || typeof input !== 'object') return oneLine(input);
+  for (const k of ['command', 'file_path', 'path', 'pattern', 'url', 'query', 'filename', 'description', 'prompt']) {
+    if (typeof input[k] === 'string' && input[k].trim()) return oneLine(input[k]);
+  }
+  const first = Object.values(input).find((v) => typeof v === 'string' && v.trim());
+  return oneLine(first || (Object.keys(input).length ? JSON.stringify(input) : ''));
+}
+
+// Agent replies are markdown: parse, sanitize, and open links in a new tab.
+// Finished messages are cached by text, since the transcript re-renders on
+// every streamed event.
+DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+  if (node.tagName === 'A') { node.setAttribute('target', '_blank'); node.setAttribute('rel', 'noreferrer noopener'); }
+});
+const toHtml = (text) => DOMPurify.sanitize(marked.parse(clipText(text), { gfm: true }));
+const mdCache = new Map();
+function markdown(text) {
+  let out = mdCache.get(text);
+  if (out === undefined) {
+    if (mdCache.size > 500) mdCache.clear();
+    out = toHtml(text);
+    mdCache.set(text, out);
+  }
+  return out;
+}
+
 function Bubble({ it }) {
   if (it.kind === 'user') return html`<div class="bubble user"><pre>${clipText(it.text)}</pre></div>`;
-  if (it.kind === 'assistant') return html`<div class="bubble assistant"><pre>${clipText(it.text)}</pre></div>`;
+  if (it.kind === 'assistant') return html`<div class="bubble assistant md" dangerouslySetInnerHTML=${{ __html: markdown(it.text) }}></div>`;
   if (it.kind === 'system') return html`<div class="chip">${it.text}</div>`;
   if (it.kind === 'control') return html`<div class="divider">${it.text}</div>`;
   if (it.kind === 'tool_use')
-    return html`<details class="tool"><summary>🔧 ${it.name}</summary><pre>${clipText(JSON.stringify(it.input, null, 2))}</pre></details>`;
+    return html`<details class="tool"><summary><${Icon} name="terminal" size=${13} /><span class="tool-name">${it.name}</span><span class="tool-prev">${toolPreview(it.input)}</span></summary><pre>${clipText(JSON.stringify(it.input, null, 2))}</pre></details>`;
   if (it.kind === 'tool_result') {
-    const text = typeof it.content === 'string' ? it.content : JSON.stringify(it.content, null, 2);
-    return html`<details class="tool result"><summary>↳ result</summary><pre>${clipText(text)}</pre></details>`;
+    const text = resultText(it.content);
+    return html`<details class=${`tool result ${it.isError ? 'err' : ''}`}><summary><${Icon} name="output" size=${13} /><span class="tool-prev">${resultPreview(text) || '(no output)'}</span></summary><pre>${clipText(text)}</pre></details>`;
   }
   if (it.kind === 'result')
-    return html`<div class="result-foot ${it.isError ? 'err' : ''}">✓ done · $${(it.cost || 0).toFixed(4)} · ${Math.round((it.ms || 0))}ms</div>`;
+    return html`<div class="result-foot ${it.isError ? 'err' : ''}">${it.isError ? 'Failed' : 'Done'} · ${fmtDur(it.ms)} · $${(it.cost || 0).toFixed(2)}</div>`;
   if (it.kind === 'stderr') return html`<div class="stderr"><pre>${clipText(it.text)}</pre></div>`;
   return html`<div class="raw"><pre>${clipText(it.text)}</pre></div>`;
 }
@@ -339,6 +466,11 @@ function SessionView({ session, now, onChanged, onMenu, onDelete, onArchive, onR
   const [loadErr, setLoadErr] = useState('');
   const [busy, setBusy] = useState(false);
   const [input, setInput] = useState('');
+  const [effort, setEffort] = useState(''); // per-message effort; '' = the session's own
+  const [copied, setCopied] = useState(false);
+  // One paste from the user's own machine: SSH in and resume this session in interactive Claude.
+  const resumeCmd = session.sshResumeHint ? `ssh -t root@${location.hostname} '${session.sshResumeHint}'` : '';
+  const copyResume = async () => { if (await copyText(resumeCmd)) { setCopied(true); setTimeout(() => setCopied(false), 1500); } };
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const partialRef = useRef({ text: '' });
@@ -426,9 +558,9 @@ function SessionView({ session, now, onChanged, onMenu, onDelete, onArchive, onR
     const prompt = input.trim();
     if (!prompt || running) return;
     setInput(''); setBusy(true);
-    try { await api(`/sessions/${id}/messages`, { method: 'POST', body: JSON.stringify({ prompt }) }); onChanged && onChanged(); }
+    try { await api(`/sessions/${id}/messages`, { method: 'POST', body: JSON.stringify({ prompt, ...(effort ? { effort } : {}) }) }); onChanged && onChanged(); }
     catch (e) { setBusy(false); alert(`Send failed: ${e.message}`); }
-  }, [input, running, id]);
+  }, [input, effort, running, id]);
   const interrupt = async () => { try { await api(`/sessions/${id}/interrupt`, { method: 'POST' }); } catch (e) { alert(e.message); } };
   const startEdit = () => { setDraft(session.title || ''); setEditing(true); };
   const saveTitle = async () => {
@@ -443,7 +575,7 @@ function SessionView({ session, now, onChanged, onMenu, onDelete, onArchive, onR
     <section class="main">
       <header class="bar">
         <div class="bar-title">
-          <button class="mobile-only btn small ghost" onClick=${onMenu} title="Environments & sessions">☰</button>
+          <button class="mobile-only btn icon ghost" onClick=${onMenu} title="Environments & sessions"><${Icon} name="menu" /></button>
           <${StatusDot} status=${session.status} />
           ${editing
             ? html`<input class="rename" value=${draft}
@@ -452,15 +584,16 @@ function SessionView({ session, now, onChanged, onMenu, onDelete, onArchive, onR
                 onKeyDown=${(e) => { if (e.key === 'Enter') { e.preventDefault(); saveTitle(); } else if (e.key === 'Escape') setEditing(false); }}
                 onBlur=${saveTitle} />`
             : html`<strong title="Double-click to rename" onDblClick=${startEdit}>${session.title || id}</strong>
-                <button class="lnk small" onClick=${startEdit} title="Rename">✎</button>
+                <button class="lnk icon-lnk" onClick=${startEdit} title="Rename"><${Icon} name="pencil" size=${13} /></button>
                 ${session.archived
-                  ? html`<button class="lnk small" onClick=${onRestore} title="Restore session">↩</button>`
-                  : html`<button class="lnk small" onClick=${onArchive} title="Archive session (hide, keep transcript)">🗄</button>`}
-                <button class="lnk small danger" onClick=${onDelete} title="Delete session">🗑</button>`}
+                  ? html`<button class="lnk icon-lnk" onClick=${onRestore} title="Restore session"><${Icon} name="restore" size=${13} /></button>`
+                  : html`<button class="lnk icon-lnk" onClick=${onArchive} title="Archive session (hide, keep transcript)"><${Icon} name="archive" size=${13} /></button>`}
+                <button class="lnk icon-lnk danger" onClick=${onDelete} title="Delete session"><${Icon} name="trash" size=${13} /></button>`}
+          ${resumeCmd && html`<button class="lnk" onClick=${copyResume} title="Copy a command to continue this session in Claude in your own terminal"><${Icon} name="terminal" size=${13} /> ${copied ? 'Copied' : 'Resume'}</button>`}
         </div>
         <div class="bar-meta muted">
           ${session.envName} · <span class="agent-tag">${agentLabel(session.agent)}</span> · ${session.model || 'default model'} · $${(session.costUsd || 0).toFixed(4)}
-          ${session.claudeSessionId && html`· <code title="agent session id">${session.claudeSessionId.slice(0, 8)}</code>`}
+          ${session.claudeSessionId && html` · <code title="agent session id">${session.claudeSessionId.slice(0, 8)}</code>`}
         </div>
         <div class="bar-meta muted" title=${`started ${fullTime(session.createdAt)}\nlast active ${fullTime(session.lastActivityAt)}`}>
           started ${fmtAgo(session.createdAt, true)} ·${' '}
@@ -469,12 +602,11 @@ function SessionView({ session, now, onChanged, onMenu, onDelete, onArchive, onR
             : html`last active ${fmtAgo(session.lastActivityAt, true)}`}
         </div>
       </header>
-      ${session.sshResumeHint && html`<div class="ssh muted" onClick=${() => copyText(session.sshResumeHint)} title="click to copy">SSH resume: <code>${session.sshResumeHint}</code></div>`}
       <div class="transcript" ref=${scroller} onScroll=${onTranscriptScroll}>
         ${loading && !loadErr && html`<div class="muted pad">loading history…</div>`}
         ${loadErr && html`<div class="err-msg">could not load history: ${loadErr}</div>`}
         ${items.map((it, i) => html`<${Bubble} it=${it} key=${i} />`)}
-        ${running && partial && html`<div class="bubble assistant live"><pre>${partial}</pre><span class="cursor">▍</span></div>`}
+        ${running && partial && html`<div class="bubble assistant live"><div class="md" dangerouslySetInnerHTML=${{ __html: toHtml(partial) }}></div><span class="cursor">▍</span></div>`}
         ${running && !partial && !loading && html`<div class="muted pad">…thinking</div>`}
       </div>
       ${hasNew && html`<button class="new-msgs" onClick=${jumpToBottom}>↓ New messages</button>`}
@@ -486,9 +618,12 @@ function SessionView({ session, now, onChanged, onMenu, onDelete, onArchive, onR
           onInput=${(e) => setInput(e.target.value)}
           onKeyDown=${(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
         ></textarea>
-        ${running
-          ? html`<button class="btn warn" onClick=${interrupt}>Interrupt</button>`
-          : html`<button class="btn" onClick=${send} disabled=${!input.trim()}>Send</button>`}
+        <div class="composer-side">
+          <${EffortSelect} levels=${effortsFor(session.agent, session.model)} value=${effort} onChange=${setEffort} />
+          ${running
+            ? html`<button class="btn ghost" onClick=${interrupt}>Interrupt</button>`
+            : html`<button class="btn ghost" onClick=${send} disabled=${!input.trim()}>Send</button>`}
+        </div>
       </footer>
     </section>`;
 }
@@ -497,12 +632,13 @@ function NewSessionModal({ envs, preselect, onClose, onCreate }) {
   const usable = envs.filter((e) => e.status === 'running' || e.status === 'degraded');
   const [envId, setEnvId] = useState(preselect || (usable[0] && usable[0].id));
   const [agent, setAgent] = useState('claude');
-  const [model, setModel] = useState('');
+  const [model, setModel] = useState(() => defaultModel('claude'));
+  const [effort, setEffort] = useState('');
   const [prompt, setPrompt] = useState('');
   const [err, setErr] = useState('');
   const create = async () => {
     if (!envId || !prompt.trim()) return;
-    try { await onCreate(envId, prompt.trim(), agent, model.trim() || undefined); } catch (e) { setErr(e.message); }
+    try { await onCreate(envId, prompt.trim(), agent, withEffort(model.trim(), effort) || undefined); } catch (e) { setErr(e.message); }
   };
   return html`
     <div class="modal-bg" onClick=${onClose}>
@@ -514,8 +650,8 @@ function NewSessionModal({ envs, preselect, onClose, onCreate }) {
             ${usable.map((e) => html`<option value=${e.id} key=${e.id}>${e.name} (:${e.port})</option>`)}
           </select>
         </label>
-        <${AgentPicker} agent=${agent} model=${model} prompt=${prompt}
-          onAgent=${setAgent} onModel=${setModel} onPrompt=${setPrompt}
+        <${AgentPicker} agent=${agent} model=${model} effort=${effort} prompt=${prompt}
+          onAgent=${setAgent} onModel=${setModel} onEffort=${setEffort} onPrompt=${setPrompt} onSubmit=${create}
           promptLabel="First message" />
         ${err && html`<div class="err-msg">${err}</div>`}
         <div class="modal-foot">
@@ -553,44 +689,41 @@ const AGENT_LABELS = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode' };
 const agentLabel = (a) => AGENT_LABELS[a] || 'Claude';
 const AGENTS_ORDER = ['claude', 'codex', 'opencode'];
 
-// Curated model choices per agent. The first entry (id '') means "let the agent /
-// server default decide". A "Custom…" escape hatch lets you type any id, except
-// for agents in NO_CUSTOM_MODEL. Set only at session start. The OpenCode (Zen)
-// list is the subset verified usable with our Zen key (see its comment below).
-// Claude and codex ids may carry an @effort suffix (low/medium/high/xhigh/max) —
-// the server splits it into --effort / -c model_reasoning_effort= (claude.js).
-// Claude Code's default effort is `high` on every model that supports it
-// (Opus 4.7 alone defaults to xhigh), so a bare id == @high.
+// Curated model choices per agent. The first entry is preselected; an id of ''
+// means "let the agent / server default decide". A "Custom…" escape hatch lets
+// you type any id, except for agents in NO_CUSTOM_MODEL. Set only at session
+// start. The OpenCode (Zen) list is the subset verified usable with our Zen key
+// (see its comment below).
 // Fable is pinned by full id: the `fable` alias flips between 5 and 5.1 by
 // Claude Code version (≥ 2.1.257 → 5.1) and by provider, so the alias would
-// silently pick a different model in an older workspace. Opus/sonnet/haiku use
-// the family alias on purpose — "latest of the family" is what we want there
-// (Claude Code ≥ 2.1.219 resolves opus → Opus 5, sonnet → Sonnet 5).
+// silently pick a different model in an older workspace. Sonnet/haiku use the
+// family alias on purpose — "latest of the family" is what we want there
+// (Claude Code 2.1.291 resolves sonnet → Sonnet 5.5).
+// `efforts` lists the effort levels a model accepts, as of 2026-10-06. Claude:
+// the API's per-model effort support (Haiku 4.5 rejects effort). Codex: the
+// supported_reasoning_levels in Codex's model list, or OpenAI's model page for
+// models no longer in it; "ultra" and "none" are left out because the server
+// only passes low–max. No `efforts` = unknown, so no effort picker.
+const ALL_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const MODELS = {
   claude: [
-    { id: '', label: 'Default' },
-    { id: 'claude-fable-5-1', label: 'Fable 5.1' },
-    { id: 'claude-fable-5-1@max', label: 'Fable 5.1 @max (hardest problems)' },
-    { id: 'claude-fable-5', label: 'Fable 5' },
-    { id: 'claude-opus-5-5', label: 'Opus 5.5 (needs Claude Code ≥ 2.1.280 — "update agents")' },
-    { id: 'claude-opus-5-5@low', label: 'Opus 5.5 @low (quick tasks)' },
-    { id: 'opus', label: 'Opus (latest this env supports)' },
-    { id: 'opus@low', label: 'Opus @low (quick tasks)' },
-    { id: 'sonnet', label: 'Sonnet 5' },
-    { id: 'haiku', label: 'Haiku 4.5' },
+    { id: 'claude-opus-5-5', label: 'Opus 5.5', aliases: ['opus'], efforts: ALL_EFFORTS }, // `opus` is the server's CLAUDE_DEFAULT_MODEL
+    { id: 'claude-fable-5-1', label: 'Fable 5.1', efforts: ALL_EFFORTS },
+    { id: 'claude-fable-5', label: 'Fable 5', efforts: ALL_EFFORTS },
+    { id: 'sonnet', label: 'Sonnet 5.5', efforts: ALL_EFFORTS },
+    { id: 'haiku', label: 'Haiku 4.5', efforts: [] },
   ],
   codex: [
-    { id: '', label: 'Default' },
-    { id: 'gpt-6-astra', label: 'gpt-6-astra (flagship)' }, // needs codex-cli ≥ 0.153 in the workspace
-    { id: 'gpt-6-astra@low', label: 'gpt-6-astra @low (quick tasks)' },
-    { id: 'gpt-6-astra@xhigh', label: 'gpt-6-astra @xhigh (hard problems)' },
-    { id: 'gpt-5.6-sol', label: 'gpt-5.6-sol' },
-    { id: 'gpt-5.6-terra', label: 'gpt-5.6-terra (balanced)' },
-    { id: 'gpt-5.6-luna', label: 'gpt-5.6-luna (fast/cheap)' },
-    { id: 'gpt-5.5', label: 'gpt-5.5' },
-    { id: 'gpt-5.4', label: 'gpt-5.4' },
-    { id: 'gpt-5.4-mini', label: 'gpt-5.4-mini' },
-    { id: 'gpt-5.3-codex-spark', label: 'gpt-5.3-codex-spark (ChatGPT sign-in only)' },
+    // Codex picks its own default model; low–xhigh is what every model in its list accepts.
+    { id: '', label: 'Default', efforts: ['low', 'medium', 'high', 'xhigh'] },
+    { id: 'gpt-6-astra', label: 'gpt-6-astra', efforts: ALL_EFFORTS }, // flagship; needs codex-cli ≥ 0.153 in the workspace
+    { id: 'gpt-5.6-sol', label: 'gpt-5.6-sol', efforts: ALL_EFFORTS },
+    { id: 'gpt-5.6-terra', label: 'gpt-5.6-terra', efforts: ALL_EFFORTS }, // balanced
+    { id: 'gpt-5.6-luna', label: 'gpt-5.6-luna', efforts: ALL_EFFORTS }, // fast / cheap
+    { id: 'gpt-5.5', label: 'gpt-5.5', efforts: ['low', 'medium', 'high', 'xhigh'] },
+    { id: 'gpt-5.4', label: 'gpt-5.4', efforts: ['low', 'medium', 'high', 'xhigh'] },
+    { id: 'gpt-5.4-mini', label: 'gpt-5.4-mini', efforts: ['low', 'medium', 'high', 'xhigh'] },
+    { id: 'gpt-5.3-codex-spark', label: 'gpt-5.3-codex-spark' }, // ChatGPT sign-in only
   ],
   // OpenCode (Zen) — the models verified usable with our Zen key (probed via
   // `opencode run -m opencode/<id>`; the gateway catalog is a superset that
@@ -647,17 +780,51 @@ const MODELS = {
 // Agents whose model list is fixed — no free-text "Custom…" option.
 const NO_CUSTOM_MODEL = new Set(['codex']);
 const MODEL_CUSTOM = '__custom__';
+// Reasoning effort is picked per message (EffortSelect) and sent as the model's
+// "@effort" suffix, which the server splits into --effort / -c
+// model_reasoning_effort= (claude.js). OpenCode passes -m through verbatim.
+const NO_EFFORT = new Set(['opencode']);
+const defaultModel = (agent) => (MODELS[agent] || MODELS.claude)[0].id;
+const stripEffort = (model) => String(model || '').replace(/@(low|medium|high|xhigh|max)$/i, '');
+const withEffort = (model, effort) => (effort ? `${stripEffort(model)}@${effort}` : model);
+// Effort levels the given agent/model accepts; [] when unknown (custom ids can
+// carry their own @effort).
+function effortsFor(agent, model) {
+  if (NO_EFFORT.has(agent)) return [];
+  const id = stripEffort(model);
+  const entry = (MODELS[agent] || []).find((m) => m.id === id || (m.aliases || []).includes(id));
+  return (entry && entry.efforts) || [];
+}
+
+// Effort picker. `stacked` renders it as a form column (dialogs); otherwise it
+// sits inline next to the composer's Send button.
+function EffortSelect({ levels, value, onChange, stacked = false }) {
+  if (!levels.length) return null;
+  const select = html`
+    <select value=${levels.includes(value) ? value : ''} onChange=${(e) => onChange(e.target.value)}>
+      <option value="">Default</option>
+      ${levels.map((x) => html`<option value=${x} key=${x}>${x}</option>`)}
+    </select>`;
+  return stacked
+    ? html`<label class="effort-col">Effort ${select}</label>`
+    : html`<label class="effort-pick" title="Reasoning effort for this message">Effort ${select}</label>`;
+}
 
 // Shared agent + model + first-message chooser, used by both the New Session and
 // New Environment dialogs so the choices stay identical. Controlled: the parent
 // owns agent/model/prompt state (it submits them). Model is start-only by design —
 // there's no editor for it after a session begins.
-function AgentPicker({ agent, model, prompt, onAgent, onModel, onPrompt, promptLabel = 'First message', promptHint = '', promptRows = 4, promptPlaceholder = 'Describe the task…' }) {
+function AgentPicker({ agent, model, effort, prompt, onAgent, onModel, onEffort, onPrompt, onSubmit, promptLabel = 'First message', promptHint = '', promptRows = 4, promptPlaceholder = 'Describe the task…' }) {
   const [custom, setCustom] = useState(false);
   const list = MODELS[agent] || MODELS.claude;
   const allowCustom = !NO_CUSTOM_MODEL.has(agent);
-  const pickAgent = (a) => { onAgent(a); onModel(''); setCustom(false); }; // reset model to default
-  const pickModel = (v) => { if (v === MODEL_CUSTOM) { setCustom(true); onModel(''); } else { setCustom(false); onModel(v); } };
+  const pickAgent = (a) => { onAgent(a); onModel(defaultModel(a)); onEffort(''); setCustom(false); }; // reset model + effort to the agent's default
+  const pickModel = (v) => {
+    if (v === MODEL_CUSTOM) { setCustom(true); onModel(''); return; }
+    setCustom(false); onModel(v);
+    if (effort && !effortsFor(agent, v).includes(effort)) onEffort('');
+  };
+  const levels = effortsFor(agent, model);
   return html`
     <div class="row two">
       <label>Agent
@@ -671,12 +838,14 @@ function AgentPicker({ agent, model, prompt, onAgent, onModel, onPrompt, promptL
           ${allowCustom && html`<option value=${MODEL_CUSTOM}>Custom…</option>`}
         </select>
       </label>
+      <${EffortSelect} stacked levels=${levels} value=${effort} onChange=${onEffort} />
     </div>
     ${custom && html`<label>Custom model id
       <input value=${model} placeholder=${agent === 'opencode' ? 'opencode/provider-model' : 'model id, optionally model@effort'} onInput=${(e) => onModel(e.target.value)} />
     </label>`}
-    <label>${promptLabel}${promptHint && html` <span class="muted small">${promptHint}</span>`}
-      <textarea value=${prompt} rows=${promptRows} placeholder=${promptPlaceholder} onInput=${(e) => onPrompt(e.target.value)}></textarea>
+    <label>${promptLabel}${promptHint && html` <span class="hint">${promptHint}</span>`}
+      <textarea value=${prompt} rows=${promptRows} placeholder=${promptPlaceholder} onInput=${(e) => onPrompt(e.target.value)}
+        onKeyDown=${(e) => { if (onSubmit && e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSubmit(); } }}></textarea>
     </label>`;
 }
 
@@ -738,7 +907,8 @@ function NewEnvModal({ presets, onClose, onCreate, onSavePreset, onUpdatePreset,
   const [name, setName] = useState('');
   const [prompt, setPrompt] = useState('');
   const [agent, setAgent] = useState('claude');
-  const [model, setModel] = useState('');
+  const [model, setModel] = useState(() => defaultModel('claude'));
+  const [effort, setEffort] = useState('');
   const [presetIds, setPresetIds] = useState([]); // selected preset ids, in check order
   const [setupScript, setSetupScript] = useState('');
   const [requires, setRequires] = useState([]); // preset ids this preset depends on (editor only)
@@ -814,7 +984,7 @@ function NewEnvModal({ presets, onClose, onCreate, onSavePreset, onUpdatePreset,
     let provision;
     try { provision = buildCustom(); } catch (e) { setErr(e.message); return; }
     setBusy(true);
-    try { await onCreate(name.trim() || undefined, provision || undefined, prompt.trim() || undefined, presetIds, agent, model.trim() || undefined); }
+    try { await onCreate(name.trim() || undefined, provision || undefined, prompt.trim() || undefined, presetIds, agent, withEffort(model.trim(), effort) || undefined); }
     catch (e) { setErr(e.message); setBusy(false); }
   };
   const savePreset = async () => {
@@ -849,12 +1019,12 @@ function NewEnvModal({ presets, onClose, onCreate, onSavePreset, onUpdatePreset,
         <label>Name (optional)
           <input value=${name} placeholder="my-devbox (a-z, 0-9, -)" onInput=${(e) => setName(e.target.value)} />
         </label>
-        <${AgentPicker} agent=${agent} model=${model} prompt=${prompt}
-          onAgent=${setAgent} onModel=${setModel} onPrompt=${setPrompt}
+        <${AgentPicker} agent=${agent} model=${model} effort=${effort} prompt=${prompt}
+          onAgent=${setAgent} onModel=${setModel} onEffort=${setEffort} onPrompt=${setPrompt} onSubmit=${create}
           promptLabel="First prompt" promptRows=${3}
-          promptHint="— optional; once the env is ready, a session with this agent/model starts with this"
+          promptHint="Optional. Once the env is ready, a session with this agent/model starts with this."
           promptPlaceholder="e.g. Add a custom field to the Oxygen builder and verify it renders." />
-        <label>Presets <span class="muted small">— compose any number; applied in the order you check them</span></label>
+        <label>Presets <span class="hint">Compose any number; applied in the order you check them</span></label>
         <div class="preset-list">
           ${presets.length === 0 && html`<div class="muted small pad">No saved presets yet.</div>`}
           ${presets.map((p) => html`
@@ -865,28 +1035,28 @@ function NewEnvModal({ presets, onClose, onCreate, onSavePreset, onUpdatePreset,
                 ${(p.requires || []).length > 0 && html`<span class="muted small" title="Auto-included before this preset">requires ${p.requires.map(presetLabel).join(', ')}</span>`}
                 ${p.description && html`<span class="muted small">${p.description}</span>`}
               </label>
-              <button class="lnk small" title="Edit preset" onClick=${() => startEdit(p)}>✎</button>
-              <button class="lnk danger small" title="Delete preset" onClick=${() => deletePreset(p.id)}>✕</button>
+              <button class="lnk icon-lnk" title="Edit preset" onClick=${() => startEdit(p)}><${Icon} name="pencil" size=${13} /></button>
+              <button class="lnk icon-lnk danger" title="Delete preset" onClick=${() => deletePreset(p.id)}><${Icon} name="trash" size=${13} /></button>
             </div>`)}
         </div>
         <details class="custom-prov" open=${showCustom} onToggle=${(e) => setShowCustom(e.target.open)}>
           <summary>${editing ? html`Editing preset — <strong>${presetName || 'untitled'}</strong>` : 'Custom provisioning (optional, applied after presets)'}</summary>
-          <label>Setup script <span class="muted small">— runs once in the workspace as <code>node</code> (cwd /home/node, WordPress at ./wp)</span>
+          <label>Setup script <span class="hint">Runs once in the workspace as <code>node</code> (cwd /home/node, WordPress at ./wp)</span>
             <textarea class="mono" rows="5" value=${setupScript} placeholder=${'#!/usr/bin/env bash\nset -euo pipefail\ncd /home/node\ngh repo clone owner/repo\n…'} onInput=${(e) => setSetupScript(e.target.value)}></textarea>
           </label>
-          <label>Dev script <span class="muted small">— long-running; runs in the <code>dev</code> container for as long as the stack is up</span>
+          <label>Dev script <span class="hint">Long-running; runs in the <code>dev</code> container for as long as the stack is up</span>
             <textarea class="mono" rows="3" value=${devScript} placeholder=${'#!/usr/bin/env bash\ncd /home/node/breakdance\nnpm run dev:codespace'} onInput=${(e) => setDevScript(e.target.value)}></textarea>
           </label>
-          <label>wp-config defines <span class="muted small">— JSON object; booleans/numbers become raw PHP literals</span>
+          <label>wp-config defines <span class="hint">JSON object; booleans/numbers become raw PHP literals</span>
             <textarea class="mono" rows="3" value=${definesText} placeholder=${'{\n  "WP_DEBUG": true,\n  "WP_MEMORY_LIMIT": "512M"\n}'} onInput=${(e) => setDefinesText(e.target.value)}></textarea>
           </label>
-          <label>Activate plugins <span class="muted small">— slugs, in order, comma-separated</span>
+          <label>Activate plugins <span class="hint">Slugs, in order, comma-separated</span>
             <input value=${activateText} placeholder="oxygen-elements, breakdance-elements" onInput=${(e) => setActivateText(e.target.value)} />
           </label>
-          <label>App ports <span class="muted small">— container ports of dev servers to publish (each env gets a unique host port; shown next to the site link)</span>
+          <label>App ports <span class="hint">Container ports of dev servers to publish (each env gets a unique host port; shown next to the site link)</span>
             <input value=${appPortsText} placeholder="3000" onInput=${(e) => setAppPortsText(e.target.value)} />
           </label>
-          <label>Requires <span class="muted small">— presets to provision before this one (auto-included when this preset is picked)</span>
+          <label>Requires <span class="hint">Presets to provision before this one (auto-included when this preset is picked)</span>
             <div class="preset-list compact">
               ${presets.filter((p) => p.id !== editing).map((p) => html`
                 <label class="preset-check" key=${p.id}>
@@ -987,7 +1157,7 @@ function SettingsModal({ onClose, onLogout }) {
     })();
   }, []);
 
-  const hint = (f) => (s && s[f] && s[f].set ? `configured ${s[f].hint} · leave blank to keep` : 'not set');
+  const hint = (f) => (s && s[f] && s[f].set ? `Configured ${s[f].hint} · leave blank to keep` : 'Not set');
   const save = async () => {
     setBusy(true); setErr(''); setSaved(false);
     try {
@@ -1009,22 +1179,22 @@ function SettingsModal({ onClose, onLogout }) {
         ${!s && !err && html`<div class="muted">Loading…</div>`}
         ${s && html`
           <p class="muted small">Saved on the server (<code>data/settings.json</code>). Tokens are write-only — set or replace them here; they're never shown back.</p>
-          <label>GitHub token <span class="muted small">— ${hint('githubToken')}</span>
+          <label>GitHub token <span class="hint">${hint('githubToken')}</span>
             <input type="password" value=${ghToken} placeholder="ghp_… / github_pat_…" onInput=${(e) => setGh(e.target.value)} />
           </label>
-          <label>Claude token <span class="muted small">— ${hint('claudeToken')}</span>
+          <label>Claude token <span class="hint">${hint('claudeToken')}</span>
             <input type="password" value=${clToken} placeholder="sk-ant-oat… (from claude setup-token)" onInput=${(e) => setCl(e.target.value)} />
           </label>
-          <label>Codex token <span class="muted small">— ${hint('codexToken')}</span>
+          <label>Codex token <span class="hint">${hint('codexToken')}</span>
             <input type="password" value=${cxToken} placeholder="sk-… (OpenAI API key)" onInput=${(e) => setCx(e.target.value)} />
           </label>
-          <label>OpenCode token <span class="muted small">— ${hint('opencodeToken')}</span>
+          <label>OpenCode token <span class="hint">${hint('opencodeToken')}</span>
             <input type="password" value=${ocToken} placeholder="OpenCode Zen API key (opencode.ai/auth)" onInput=${(e) => setOc(e.target.value)} />
           </label>
           <label>WordPress admin username
             <input value=${wpUser} onInput=${(e) => setWpUser(e.target.value)} />
           </label>
-          <label>WordPress admin password <span class="muted small">— ${hint('wpAdminPassword')}</span>
+          <label>WordPress admin password <span class="hint">${hint('wpAdminPassword')}</span>
             <input type="password" value=${wpPass} placeholder="leave blank to keep" onInput=${(e) => setWpPass(e.target.value)} />
           </label>
           <label>WordPress admin email
@@ -1111,56 +1281,52 @@ function HealthModal({ onClose }) {
       <div class="modal wide health" onClick=${(e) => e.stopPropagation()}>
         <h3>System health</h3>
         ${err && html`<div class="err-msg">${err}</div>`}
-        ${!h && !err && html`<div class="muted">Loading… (gathering docker stats, ~2s)</div>`}
+        ${!h && !err && html`<div class="muted">Loading…</div>`}
         ${h && html`
-          <div class="hrow">
-            <span class="hlabel">Memory</span>
-            <${HealthBar} pct=${m.usedPct} tone=${tone(m.usedPct, 75, 90)} />
-            <span class="hval">${gb(m.usedBytes)} used · <b>${gb(m.availableBytes)} free</b> of ${gb(m.totalBytes)}${m.swapTotalBytes ? '' : ' · no swap'}</span>
+          <div class="stat-grid">
+            <div class="stat">
+              <div class="stat-label">Memory</div>
+              <div class="stat-value">${gb(m.availableBytes)} <span>free</span></div>
+              <${HealthBar} pct=${m.usedPct} tone=${tone(m.usedPct, 75, 90)} />
+              <div class="stat-sub">${gb(m.usedBytes)} of ${gb(m.totalBytes)} used</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">CPU</div>
+              <div class="stat-value">${load1.toFixed(2)} <span>load</span></div>
+              <${HealthBar} pct=${(load1 / c.cores) * 100} tone=${tone(load1 / c.cores, 0.7, 1)} />
+              <div class="stat-sub">${c.cores} cores</div>
+            </div>
+            ${dsk && html`<div class="stat">
+              <div class="stat-label">Disk</div>
+              <div class="stat-value">${gb(dsk.availBytes)} <span>free</span></div>
+              <${HealthBar} pct=${dsk.usedPct} tone=${tone(dsk.usedPct, 75, 90)} />
+              <div class="stat-sub">${gb(dsk.usedBytes)} of ${gb(dsk.totalBytes)} used</div>
+            </div>`}
+            <div class="stat">
+              <div class="stat-label">Environments</div>
+              <div class="stat-value">${h.environments.running} <span>running</span></div>
+              <div class=${`stat-sub ${est.ramHeadroomEnvs != null && est.ramHeadroomEnvs <= 1 ? 'bad' : ''}`}>${est.ramHeadroomEnvs != null ? `room for ~${est.ramHeadroomEnvs} more` : `${h.environments.count} stored`}</div>
+            </div>
           </div>
-          <div class="hrow">
-            <span class="hlabel">CPU load</span>
-            <${HealthBar} pct=${(load1 / c.cores) * 100} tone=${tone(load1 / c.cores, 0.7, 1)} />
-            <span class="hval">${load1.toFixed(2)} (1m) of ${c.cores} cores · ${c.loadavg.map((x) => x.toFixed(2)).join(' / ')}</span>
-          </div>
-          ${dsk && html`<div class="hrow">
-            <span class="hlabel">Disk</span>
-            <${HealthBar} pct=${dsk.usedPct} tone=${tone(dsk.usedPct, 75, 90)} />
-            <span class="hval">${gb(dsk.usedBytes)} used · <b>${gb(dsk.availBytes)} free</b> of ${gb(dsk.totalBytes)}</span>
-          </div>`}
-          <div class="hrow">
-            <span class="hlabel">Docker</span>
-            <span class="hval wide-val">${h.docker.containersRunning}/${h.docker.containersTotal} containers${dfRow('Images') ? ` · images ${dfRow('Images').Size}` : ''}${dfRow('Build Cache') ? html` · build cache ${dfRow('Build Cache').Size} <span class="muted">(${dfRow('Build Cache').Reclaimable} reclaimable — run docker system prune)</span>` : ''}</span>
-          </div>
-          <div class=${`health-callout ${est.ramHeadroomEnvs != null && est.ramHeadroomEnvs <= 1 ? 'bad' : ''}`}>
-            ${est.ramHeadroomEnvs != null
-              ? html`Room for ≈ <b>${est.ramHeadroomEnvs}</b> more environment${est.ramHeadroomEnvs === 1 ? '' : 's'} in RAM — avg <b>${gb(est.avgEnvMemBytes)}</b>/env, ${h.environments.running} running.${m.swapTotalBytes ? '' : ' No swap: when free RAM hits zero the box starts OOM-killing processes, so keep headroom.'}`
-              : html`${h.environments.running} environments running.`}
-          </div>
-          <div class="muted small">Environments: ${h.environments.running}${h.environments.maxRunning ? `/${h.environments.maxRunning}` : ''} running · ${h.environments.count} stored · stored cap ${h.environments.max}</div>
           ${h.perEnv.length > 0 && html`
             <table class="health-table">
-              <thead><tr><th>Environment</th><th>Status</th><th>Containers</th><th>Memory</th></tr></thead>
               <tbody>
                 ${h.perEnv.map((e) => html`<tr key=${e.name}>
-                  <td>${e.name}</td>
-                  <td><${StatusDot} status=${e.status} /> ${e.status}</td>
-                  <td>${e.containers}</td>
-                  <td>${gb(e.memBytes)}</td>
+                  <td><${StatusDot} status=${e.status} /> ${e.name}</td>
+                  <td class="num">${gb(e.memBytes)}</td>
                 </tr>`)}
               </tbody>
             </table>`}
+          <div class="health-docker">Docker: ${h.docker.containersRunning} containers${dfRow('Images') ? ` · images ${dfRow('Images').Size}` : ''}${dfRow('Build Cache') ? ` · build cache ${dfRow('Build Cache').Size}` : ''}</div>
         `}
-        <div class="health-controls">
-          <div class="section-head"><span>Controls</span></div>
-          <div class="ctrl-row">
-            <button class="btn small ghost" onClick=${interruptAll}>Interrupt all sessions</button>
-            <button class="btn small warn" onClick=${stopAll}>Stop all environments</button>
-            <button class="btn small danger-btn" onClick=${shutdown}>Shut down server</button>
-          </div>
-          ${ctrlMsg && html`<div class="muted small ctrl-msg">${ctrlMsg}</div>`}
+        ${ctrlMsg && html`<div class="muted small ctrl-msg">${ctrlMsg}</div>`}
+        <div class="modal-foot">
+          <button class="btn small ghost" onClick=${interruptAll}>Interrupt all</button>
+          <button class="btn small ghost" onClick=${stopAll}>Stop all</button>
+          <button class="btn small ghost danger" onClick=${shutdown}>Shut down</button>
+          <span class="spacer"></span>
+          <button class="btn ghost" onClick=${onClose}>Close</button>
         </div>
-        <div class="modal-foot"><button class="btn ghost" onClick=${onClose}>Close</button></div>
       </div>
     </div>`;
 }
@@ -1192,7 +1358,7 @@ function RenameEnvModal({ env, onClose, onSave }) {
         <input autofocus value=${val} placeholder=${env.name}
           onInput=${(e) => setVal(e.target.value)}
           onKeyDown=${onKeys} />
-        <label>Tags <span class="muted small">— comma-separated; used for search and the "by tag" grouping</span>
+        <label>Tags <span class="hint">Comma-separated; used for search and the "by tag" grouping</span>
           <input value=${tagsText} placeholder="demo, breakdance, client-x"
             onInput=${(e) => setTagsText(e.target.value)}
             onKeyDown=${onKeys} />
@@ -1281,6 +1447,7 @@ function App() {
   const [authed, setAuthed] = useState(!!token.get());
   const [showSettings, setShowSettings] = useState(false);
   const [showHealth, setShowHealth] = useState(false);
+  const [boxName, setBoxName] = useState('Devbox');
   const [now, setNow] = useState(() => Date.now());
 
   const refresh = useCallback(async () => {
@@ -1291,6 +1458,8 @@ function App() {
   }, []);
 
   useEffect(() => { if (authed) { refresh(); const t = setInterval(refresh, 3000); return () => clearInterval(t); } }, [authed, refresh]);
+  useEffect(() => { if (authed) api('/settings').then((d) => d.name && setBoxName(d.name)).catch(() => {}); }, [authed]);
+  useEffect(() => { document.title = `${boxName} · Claude sessions`; }, [boxName]);
 
   // Tick once a second ONLY while a session is actively running, so the live
   // "working Ns" counters advance smoothly without re-rendering when idle.
@@ -1308,6 +1477,10 @@ function App() {
   const createSession = async (envId, prompt, agent, model) => {
     const s = await api(`/environments/${envId}/sessions`, { method: 'POST', body: JSON.stringify({ prompt, agent, model }) });
     setNewSession(null); await refresh(); setSelectedId(s.id);
+  };
+  const renameBox = async (name) => {
+    try { const d = await api('/settings', { method: 'PUT', body: JSON.stringify({ name }) }); setBoxName(d.name); }
+    catch (e) { alert(`Rename failed: ${e.message}`); }
   };
   const renameEnvironment = async (env, displayName, tags) => {
     try {
@@ -1401,7 +1574,7 @@ function App() {
 
   return html`
     <div class=${`layout ${drawerOpen ? 'drawer-open' : ''}`}>
-      <${Sidebar} sessions=${sessions} envs=${envs} selectedId=${selectedId} now=${now}
+      <${Sidebar} name=${boxName} onRename=${renameBox} sessions=${sessions} envs=${envs} selectedId=${selectedId} now=${now}
         onSelect=${(id) => { setSelectedId(id); setDrawerOpen(false); }} onNewEnv=${() => setShowNewEnv(true)}
         onEnvAction=${envAction} onSettings=${() => setShowSettings(true)} onHealth=${() => setShowHealth(true)}
         onCloseDrawer=${() => setDrawerOpen(false)}
@@ -1410,11 +1583,11 @@ function App() {
       ${selected
         ? html`<${SessionView} session=${selected} key=${selected.id} now=${now} onChanged=${refresh} onMenu=${() => setDrawerOpen(true)} onDelete=${() => deleteSession(selected)} onArchive=${() => archiveSession(selected)} onRestore=${() => restoreSession(selected)} />`
         : html`<section class="main empty">
-            <button class="mobile-only menu-btn btn small ghost" onClick=${() => setDrawerOpen(true)} title="Environments & sessions">☰</button>
+            <button class="mobile-only menu-btn btn icon ghost" onClick=${() => setDrawerOpen(true)} title="Environments & sessions"><${Icon} name="menu" /></button>
             <div class="muted">
             ${envs.length === 0
               ? html`No environments yet. <button class="btn" onClick=${() => setShowNewEnv(true)}>Create an environment</button> to begin.`
-              : html`Select a session, or <button class="btn" onClick=${() => setNewSession({})}>start a new one</button>.`}
+              : html`Select a session, or <button class="btn" onClick=${() => setNewSession({})}>start a new one</button>`}
           </div></section>`}
       ${newSession && html`<${NewSessionModal} envs=${envs} preselect=${newSession.preselect} onClose=${() => setNewSession(null)} onCreate=${createSession} />`}
       ${showNewEnv && html`<${NewEnvModal} presets=${presets} onClose=${() => setShowNewEnv(false)} onCreate=${createEnv} onSavePreset=${savePreset} onUpdatePreset=${updatePreset} onDeletePreset=${deletePreset} />`}
@@ -1427,4 +1600,8 @@ function App() {
     </div>`;
 }
 
-render(html`<${App} />`, document.getElementById('root'));
+// Clear the static "Loading…" placeholder: render() diffs against existing
+// children rather than replacing them, so it would stay below the app.
+const root = document.getElementById('root');
+root.textContent = '';
+render(html`<${App} />`, root);
