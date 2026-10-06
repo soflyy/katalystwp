@@ -7,6 +7,7 @@
   --accent: #60a5fa; --accent2: rgba(96,165,250,.12); --on-light: #18181b;
   --green: #22c55e; --amber: #f59e0b; --red: #f87171; --grey: #71717a;
   --ring: rgba(161,161,170,.35);
+  --hl-keyword: #c4b5fd; --hl-string: #86efac; --hl-number: #fdba74; --hl-title: #93c5fd; --hl-attr: #7dd3fc; --hl-type: #f9a8d4;
   --radius: 8px; --radius-sm: 6px;
   --sans: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -77,10 +78,10 @@ input[type="checkbox"] { accent-color: var(--text); }
 
 /* environment list filter (active / stopped / all), tab-style */
 .env-filter { display: flex; gap: 2px; margin: 0 16px 8px; padding: 3px; background: var(--panel2); border-radius: var(--radius); }
-.env-filter .seg { flex: 1; background: transparent; border: 0; border-radius: var(--radius-sm); color: var(--muted);
+.seg { flex: 1; background: transparent; border: 0; border-radius: var(--radius-sm); color: var(--muted);
   cursor: pointer; font-family: inherit; font-size: 12px; font-weight: 500; padding: 4px 6px; text-align: center; }
-.env-filter .seg:hover { color: var(--text); }
-.env-filter .seg.on { background: var(--bg); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.5); }
+.seg:hover { color: var(--text); }
+.seg.on { background: var(--bg); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.5); }
 
 /* search + group-by controls under the filter */
 .env-tools { display: flex; gap: 6px; padding: 0 16px 12px; }
@@ -237,6 +238,50 @@ input[type="checkbox"] { accent-color: var(--text); }
   border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
 .composer textarea::placeholder { color: var(--faint); }
 .composer-side { display: flex; flex-direction: column; justify-content: flex-end; gap: 8px; }
+
+/* attachments: chips in the composer, thumbnails in sent messages */
+.composer-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.composer.dragging .composer-main textarea { border-color: var(--accent); background: var(--accent2); }
+.composer-tools { display: flex; align-items: center; gap: 4px; }
+.attach-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.attach-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 280px; padding: 3px 4px; border: 1px solid var(--line);
+  border-radius: var(--radius-sm); background: var(--panel); font-size: 12px; }
+.attach-chip img { width: 28px; height: 28px; object-fit: cover; border-radius: 4px; }
+.attach-chip .attach-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attach-chip.err { border-color: rgba(248,113,113,.4); color: #fca5a5; }
+.sent-files { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; margin-top: 8px; }
+.file-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 280px; padding: 2px 4px 2px 6px; border: 1px solid var(--line);
+  border-radius: var(--radius-sm); background: var(--panel); color: var(--muted); font-size: 12px; }
+.file-chip img { width: 24px; height: 24px; object-fit: cover; border-radius: 3px; }
+.file-chip-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* preview / download buttons after a workspace file path */
+.file-acts { display: inline-flex; gap: 1px; margin-left: 4px; vertical-align: -2px; }
+.file-act { display: inline-flex; padding: 2px; border: 0; border-radius: 4px; background: none; color: var(--faint); cursor: pointer; }
+.file-act:hover { color: var(--text); background: var(--hover); }
+.file-modal { margin: 0; display: flex; flex-direction: column; gap: 8px; max-width: 94vw; padding: 12px; background: var(--bg);
+  border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 16px 50px rgba(0,0,0,.6); }
+.file-modal img { display: block; max-width: calc(94vw - 24px); max-height: calc(90vh - 72px); object-fit: contain; border-radius: var(--radius-sm); }
+.file-text { width: min(1000px, calc(94vw - 24px)); max-height: calc(90vh - 72px); overflow: auto; padding: 12px 14px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-sm); color: var(--text); font-size: 12px; white-space: pre; }
+pre.file-text > code { background: none; border: 0; padding: 0; font: inherit; }
+.file-text.md { padding: 16px 20px; background: var(--bg); font-size: 14px; white-space: normal; }
+.file-modal figcaption { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--muted); font: 12px var(--mono); }
+.file-modal-path { min-width: 0; overflow-wrap: anywhere; }
+.file-modal-acts { display: flex; align-items: center; gap: 2px; flex: none; }
+.view-toggle { display: inline-flex; gap: 2px; margin-right: 6px; padding: 2px; background: var(--panel2); border-radius: var(--radius-sm); }
+.view-toggle .seg { padding: 2px 10px; font-size: 11.5px; }
+
+/* highlight.js tokens */
+.hljs-keyword, .hljs-selector-tag, .hljs-built_in { color: var(--hl-keyword); }
+.hljs-string, .hljs-regexp, .hljs-addition { color: var(--hl-string); }
+.hljs-number, .hljs-literal, .hljs-symbol { color: var(--hl-number); }
+.hljs-title, .hljs-section { color: var(--hl-title); }
+.hljs-attr, .hljs-attribute, .hljs-property, .hljs-variable, .hljs-template-variable, .hljs-selector-class, .hljs-selector-id { color: var(--hl-attr); }
+.hljs-type, .hljs-title.class_ { color: var(--hl-type); }
+.hljs-comment, .hljs-quote { color: var(--faint); font-style: italic; }
+.hljs-meta, .hljs-tag, .hljs-name, .hljs-punctuation { color: var(--muted); }
+.hljs-deletion { color: var(--red); }
 
 /* effort picker next to a message box */
 .effort-pick { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
