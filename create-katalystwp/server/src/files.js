@@ -3,7 +3,7 @@
 // there): previews and downloads for the UI, and uploads a message can attach.
 
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, realpath, stat, chown, rm, open } from 'node:fs/promises';
+import { mkdir, realpath, stat, chown, rm, open, readdir } from 'node:fs/promises';
 import { join, extname, basename, isAbsolute, relative, resolve } from 'node:path';
 import { httpErr } from './ops.js';
 
@@ -17,15 +17,43 @@ const IMAGE_TYPES = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image
 const workspaceOf = (env) => join(env.dir, 'workspace');
 
 // Map an in-container path onto the host workspace, refusing anything that
-// resolves (symlinks included) outside it.
+// resolves (symlinks included) outside it. A relative path that isn't under
+// /home/node is looked up as relative to the folder an agent was working in.
 async function resolveInWorkspace(env, path) {
   const rel = isAbsolute(path) ? relative(HOME, path) : path;
   if (!rel || rel.startsWith('..') || isAbsolute(rel)) throw httpErr(400, 'path must be inside /home/node');
   const root = await realpath(workspaceOf(env));
   let real;
-  try { real = await realpath(resolve(root, rel)); } catch { throw httpErr(404, 'file not found'); }
+  try { real = await realpath(resolve(root, rel)); } catch {
+    real = isAbsolute(path) ? null : await findBySuffix(root, rel);
+    if (!real) throw httpErr(404, 'file not found');
+  }
   if (real !== root && !real.startsWith(root + '/')) throw httpErr(400, 'path must be inside /home/node');
   return real;
+}
+
+// Agents name files relative to the repo they cd'd into (admin/src/pages/
+// Connect.jsx), so find the workspace folder that holds `rel`: the shallowest
+// one, and only if it's the only one at that depth. Skips dependency folders,
+// doesn't follow symlinks, and gives up after a few thousand folders.
+const SKIP_DIRS = new Set(['node_modules', '.git', 'vendor']);
+async function findBySuffix(root, rel) {
+  let level = [root];
+  let seen = 0;
+  for (let depth = 0; depth <= 6 && level.length && seen < 5000; depth++) {
+    const found = [];
+    const next = [];
+    for (const dir of level) {
+      seen++;
+      try { if ((await stat(join(dir, rel))).isFile()) found.push(join(dir, rel)); } catch {}
+      const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+      for (const e of entries) if (e.isDirectory() && !SKIP_DIRS.has(e.name)) next.push(join(dir, e.name));
+    }
+    if (found.length === 1) return realpath(found[0]);
+    if (found.length > 1) throw httpErr(404, `file not found: ${found.length} files end with ${rel}`);
+    level = next;
+  }
+  return null;
 }
 
 // A file counts as text when its first 8 KB has no NUL byte.
