@@ -11,6 +11,7 @@ import { composeProvision } from './provision.js';
 import { httpErr, validatePreset, normalizeTags, checkPresetRequires } from './ops.js';
 import { openSse } from './sse.js';
 import { makeStaticHandler } from './static.js';
+import * as files from './files.js';
 
 export function buildRoutes(config, registry, manager, sessions, presets, settings, ops) {
   const staticHandler = makeStaticHandler(config.uiRoot);
@@ -73,6 +74,10 @@ export function buildRoutes(config, registry, manager, sessions, presets, settin
     route('POST', '/environments/:id/admin-login', async (ctx) => {
       ctx.send(200, await ops.mintAdminLogin(envOr404(ctx)));
     }),
+    // Workspace files (files.js): previews and downloads for the UI, and
+    // uploads a message can attach (POST the raw file, ?name=…).
+    route('GET', '/environments/:id/files', async (ctx) => files.serveFile(ctx, envOr404(ctx)), { kind: 'raw' }),
+    route('POST', '/environments/:id/uploads', async (ctx) => files.upload(ctx, envOr404(ctx)), { kind: 'raw' }),
     // Update the Claude Code / Codex / OpenCode CLIs inside a running env
     // (npm -g @latest as root). Synchronous; can take a couple of minutes.
     route('POST', '/environments/:id/update-agents', async (ctx) => {
@@ -181,7 +186,7 @@ export function buildRoutes(config, registry, manager, sessions, presets, settin
       await assertUsable(env);
       const prompt = (ctx.body.prompt || '').trim();
       if (!prompt) throw httpErr(400, 'prompt is required');
-      await sessions.engine.sendMessage(env, s, { prompt, effort: ctx.body.effort });
+      await sessions.engine.sendMessage(env, s, { prompt, effort: ctx.body.effort, files: ctx.body.files });
       ctx.send(202, publicSession(sessions.store.get(s.id)));
     }),
 

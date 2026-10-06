@@ -8,6 +8,8 @@
 //              ?access_token= (EventSource can't set headers).
 //   'static' — serves the UI; handler owns ctx.res; the SHELL is unauthenticated
 //              (it holds no secrets and prompts for the token client-side).
+//   'raw'    — body not parsed (handler reads ctx.req, e.g. a file upload); auth
+//              accepts bearer OR ?access_token= so <img src> can load files.
 
 import http from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
@@ -25,7 +27,7 @@ export function createServer(config, routes) {
       const kind = match.kind || 'json';
       // Auth: static shell is open; sse accepts header OR ?access_token=; rest bearer.
       if (config.apiToken && kind !== 'static') {
-        const ok = kind === 'sse'
+        const ok = kind === 'sse' || kind === 'raw'
           ? tokenOk(bearer(req) || url.searchParams.get('access_token'), config.apiToken)
           : tokenOk(bearer(req), config.apiToken);
         if (!ok) return send(res, 401, { error: 'unauthorized' });

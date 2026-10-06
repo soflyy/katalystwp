@@ -267,17 +267,22 @@ export class ClaudeEngine {
   }
 
   // Continue an existing session (resume). Caller ensures it isn't already running.
-  async sendMessage(env, session, { prompt, effort }) {
+  async sendMessage(env, session, { prompt, effort, files }) {
     await this.store.update(session.id, { status: 'running', lastActivityAt: new Date().toISOString() });
     // A per-message effort overrides the session's @effort for this turn only.
     let model = session.model;
     if (EFFORT_LEVELS.has(effort) && session.agent !== 'opencode') model = `${splitModelEffort(model).model || ''}@${effort}`;
-    this._runTurn(env, { ...session, status: 'running', model }, prompt);
+    // Attachments are files uploaded into the workspace (files.js).
+    const attached = (Array.isArray(files) ? files : []).filter((f) => typeof f === 'string' && f.startsWith('/home/node/uploads/')).slice(0, 20);
+    this._runTurn(env, { ...session, status: 'running', model }, prompt, attached);
   }
 
-  _runTurn(env, session, prompt) {
+  _runTurn(env, session, prompt, files = []) {
     const agent = agentFor(session.agent);
-    const args = [join(env.dir, 'scripts', 'in-workspace.sh'), ...agent.buildArgs(session, prompt)];
+    // The agent gets the attachment paths appended; it opens them itself
+    // (Claude's Read and Codex's view_image both handle images).
+    const agentPrompt = files.length ? `${prompt}\n\nAttached files:\n${files.map((f) => `- ${f}`).join('\n')}` : prompt;
+    const args = [join(env.dir, 'scripts', 'in-workspace.sh'), ...agent.buildArgs(session, agentPrompt)];
 
     mkdirSync(this.config.sessionsDir, { recursive: true });
     const ndjson = createWriteStream(session.eventLogPath, { flags: 'a' });
@@ -286,7 +291,7 @@ export class ClaudeEngine {
 
     // The agent doesn't echo the prompt (it's argv), so record it ourselves — to
     // the ndjson (transcript reload) and the live bus. uuid dedupes replay vs SSE.
-    const promptEvt = { type: 'user_prompt', text: prompt, uuid: randomUUID() };
+    const promptEvt = { type: 'user_prompt', text: prompt, ...(files.length ? { files } : {}), uuid: randomUUID() };
     ndjson.write(JSON.stringify(promptEvt) + '\n');
     this.bus.publish(session.id, promptEvt);
 

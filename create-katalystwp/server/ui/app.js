@@ -25,6 +25,17 @@ async function api(path, opts = {}) {
   }
   return res.json();
 }
+// Upload one file into an env's workspace (raw body); resolves to { path, … }.
+async function uploadFile(envId, file) {
+  const res = await fetch(`/environments/${envId}/uploads?name=${encodeURIComponent(file.name || 'pasted.png')}`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token.get()}`, 'content-type': file.type || 'application/octet-stream' },
+    body: file,
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `${res.status} ${res.statusText}`);
+  return body;
+}
 const streamUrl = (id) => {
   const t = token.get();
   return `/sessions/${id}/stream${t ? `?access_token=${encodeURIComponent(t)}` : ''}`;
@@ -62,7 +73,7 @@ function reduce(items, partialRef, evt) {
     }
     case 'user_prompt':
       // the message the user sent — claude -p doesn't echo it, so the server records it
-      push({ kind: 'user', text: evt.text });
+      push({ kind: 'user', text: evt.text, files: evt.files || [] });
       break;
     case 'user': {
       const content = (evt.message && evt.message.content) || [];
@@ -111,6 +122,10 @@ const ICONS = {
   restore: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
   pencil: '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>',
   terminal: '<path d="M12 19h8"/><path d="m4 17 6-6-6-6"/>',
+  eye: '<path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/>',
+  download: '<path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/>',
+  paperclip: '<path d="m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551"/>',
+  file: '<path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/>',
   output: '<path d="m15 10 5 5-5 5"/><path d="M4 4v7a4 4 0 0 0 4 4h12"/>',
   alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
 };
@@ -430,7 +445,9 @@ function toolPreview(input) {
 DOMPurify.addHook('afterSanitizeAttributes', (node) => {
   if (node.tagName === 'A') { node.setAttribute('target', '_blank'); node.setAttribute('rel', 'noreferrer noopener'); }
 });
-const toHtml = (text) => DOMPurify.sanitize(marked.parse(clipText(text), { gfm: true }));
+// Markdown images become links, so a relative path doesn't load as a broken <img>.
+marked.use({ renderer: { image({ href, text }) { return `<a href="${String(href).replace(/"/g, '&quot;')}">${text || href}</a>`; } } });
+const toHtml = (text) => withFileActions(DOMPurify.sanitize(marked.parse(clipText(text), { gfm: true })));
 const mdCache = new Map();
 function markdown(text) {
   let out = mdCache.get(text);
@@ -442,16 +459,183 @@ function markdown(text) {
   return out;
 }
 
-function Bubble({ it }) {
-  if (it.kind === 'user') return html`<div class="bubble user"><pre>${clipText(it.text)}</pre></div>`;
-  if (it.kind === 'assistant') return html`<div class="bubble assistant md" dangerouslySetInnerHTML=${{ __html: markdown(it.text) }}></div>`;
+// Workspace file paths (absolute under /home/node, or relative to it with a
+// directory part) get preview and download buttons, served by
+// /environments/:id/files.
+const FILE_PATH_SRC = String.raw`(?:\/home\/node\/|\.{1,2}\/|\.?[\w@-][\w@.-]*\/)[\w@./-]*[\w@-]\.[A-Za-z0-9]{1,8}`;
+const FILE_PATH = new RegExp(String.raw`(?<![\w@:/.-])${FILE_PATH_SRC}(?![\w@/-]|\.[A-Za-z0-9])`, 'g');
+const FILE_PATH_ONLY = new RegExp(`^${FILE_PATH_SRC}$`);
+const isFilePath = (s) => FILE_PATH_ONLY.test(String(s || '').trim());
+const isImagePath = (s) => /\.(png|jpe?g|gif|webp)$/i.test(String(s || ''));
+const fileUrl = (envId, path, extra = '') => `/environments/${envId}/files?path=${encodeURIComponent(path)}${extra}`;
+// Uploads carry an id prefix (files.js); drop it for display.
+const fileName = (path) => {
+  const name = path.split('/').pop();
+  return path.startsWith('/home/node/uploads/') ? name.replace(/^[a-z0-9]+-/, '') : name;
+};
+
+// Fetch with the token in a header (not the URL) and save the file.
+async function downloadFile(envId, path) {
+  const res = await fetch(fileUrl(envId, path, '&download=1'), { headers: { authorization: `Bearer ${token.get()}` } });
+  if (!res.ok) { const body = await res.json().catch(() => ({})); alert(`Download failed: ${body.error || res.status}`); return; }
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url; a.download = fileName(path);
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// The buttons as markup, for injecting into rendered markdown (clicks are
+// delegated via data-act / data-file).
+const iconSvg = (name, size) => `<svg class="icon" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
+const escAttr = (s) => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+const fileActionsHtml = (path) => `<span class="file-acts">`
+  + `<button class="file-act" data-act="preview" data-file="${escAttr(path)}" title="Preview">${iconSvg('eye', 12)}</button>`
+  + `<button class="file-act" data-act="download" data-file="${escAttr(path)}" title="Download">${iconSvg('download', 12)}</button></span>`;
+// After sanitizing: inline code and links that name a workspace file get the
+// buttons; such links lose their href (it would point at the UI server).
+function withFileActions(safeHtml) {
+  const t = document.createElement('template');
+  t.innerHTML = safeHtml;
+  for (const el of t.content.querySelectorAll('code, a')) {
+    if (el.tagName === 'CODE' && el.closest('pre')) continue;
+    const ref = el.tagName === 'CODE' ? el.textContent.trim() : el.getAttribute('href');
+    if (!isFilePath(ref)) continue;
+    if (el.tagName === 'A') el.removeAttribute('href');
+    el.insertAdjacentHTML('afterend', fileActionsHtml(ref));
+  }
+  return t.innerHTML;
+}
+const onFileActionClick = (acts) => (e) => {
+  const btn = e.target.closest('[data-act]');
+  if (!btn || !acts) return;
+  e.preventDefault();
+  acts[btn.dataset.act](btn.dataset.file);
+};
+
+function FileActions({ path, acts }) {
+  const run = (fn) => (e) => { e.preventDefault(); e.stopPropagation(); fn(path); };
+  return html`<span class="file-acts">
+    <button class="file-act" title="Preview" onClick=${run(acts.preview)}><${Icon} name="eye" size=${12} /></button>
+    <button class="file-act" title="Download" onClick=${run(acts.download)}><${Icon} name="download" size=${12} /></button>
+  </span>`;
+}
+
+// Plain text with preview / download buttons after each workspace file path.
+function FileRefs({ text, acts }) {
+  const str = String(text ?? '');
+  if (!acts) return str;
+  const parts = [];
+  let last = 0;
+  for (const m of str.matchAll(FILE_PATH)) {
+    let end = m.index + m[0].length;
+    end += (str.slice(end).match(/^:\d+(?::\d+)?/) || [''])[0].length; // keep a path:line suffix together
+    parts.push(str.slice(last, end), html`<${FileActions} path=${m[0]} acts=${acts} />`);
+    last = end;
+  }
+  if (!parts.length) return str;
+  parts.push(str.slice(last));
+  return html`${parts}`;
+}
+
+// Text previews of markdown render and of code highlight, with a toggle back to
+// the raw text. highlight.js loads on the first code preview.
+const CODE_LANGS = {
+  js: 'javascript', mjs: 'javascript', cjs: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript',
+  json: 'json', php: 'php', css: 'css', scss: 'scss', less: 'less', html: 'xml', htm: 'xml', xml: 'xml', svg: 'xml',
+  yml: 'yaml', yaml: 'yaml', sh: 'bash', bash: 'bash', zsh: 'bash', py: 'python', rb: 'ruby', go: 'go', rs: 'rust',
+  java: 'java', sql: 'sql', ini: 'ini', toml: 'ini', diff: 'diff', patch: 'diff',
+};
+const extOf = (path) => (path.match(/\.(\w+)$/) || [])[1]?.toLowerCase();
+const isMarkdownPath = (path) => ['md', 'markdown', 'mdx'].includes(extOf(path));
+let hljsLoad = null;
+const loadHljs = () => (hljsLoad ||= import('https://esm.sh/@highlightjs/cdn-assets@11.12.0/es/highlight.min.js').then((m) => m.default));
+
+// Preview a workspace file: images as images, text as text.
+function FileModal({ envId, path, onClose }) {
+  const [view, setView] = useState({ loading: true });
+  const [raw, setRaw] = useState(false);
+  const [highlighted, setHighlighted] = useState(null);
+  const text = view.text != null ? clipText(view.text, 200000) : null;
+  const lang = CODE_LANGS[extOf(path)];
+  const isMd = isMarkdownPath(path);
+  useEffect(() => {
+    if (text == null || !lang) return;
+    let live = true;
+    loadHljs().then((hljs) => { if (live) setHighlighted(hljs.highlight(text, { language: lang, ignoreIllegals: true }).value); }).catch(() => {});
+    return () => { live = false; };
+  }, [text, lang]);
+  const pretty = isMd && text ? DOMPurify.sanitize(marked.parse(text, { gfm: true })) : highlighted;
+  useEffect(() => {
+    let live = true;
+    let objectUrl = null;
+    (async () => {
+      try {
+        const res = await fetch(fileUrl(envId, path), { headers: { authorization: `Bearer ${token.get()}` } });
+        if (!res.ok) { const body = await res.json().catch(() => ({})); throw new Error(body.error || `${res.status} ${res.statusText}`); }
+        if ((res.headers.get('content-type') || '').startsWith('image/')) {
+          objectUrl = URL.createObjectURL(await res.blob());
+          if (live) setView({ image: objectUrl });
+        } else {
+          const text = await res.text();
+          if (live) setView({ text });
+        }
+      } catch (e) { if (live) setView({ error: e.message }); }
+    })();
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => { live = false; if (objectUrl) URL.revokeObjectURL(objectUrl); document.removeEventListener('keydown', onKey); };
+  }, [envId, path]);
+  return html`
+    <div class="modal-bg" onClick=${onClose}>
+      <figure class="file-modal" onClick=${(e) => e.stopPropagation()}>
+        ${view.loading && html`<div class="muted pad">Loading…</div>`}
+        ${view.error && html`<div class="err-msg">${view.error}</div>`}
+        ${view.image && html`<img src=${view.image} alt=${path} />`}
+        ${text != null && (!pretty || raw
+          ? html`<pre class="file-text">${text}</pre>`
+          : isMd
+            ? html`<div class="file-text md" dangerouslySetInnerHTML=${{ __html: pretty }} />`
+            : html`<pre class="file-text"><code dangerouslySetInnerHTML=${{ __html: pretty }} /></pre>`)}
+        <figcaption>
+          <span class="file-modal-path">${path}</span>
+          <span class="file-modal-acts">
+            ${pretty && html`<span class="view-toggle">
+              <button class=${`seg ${raw ? '' : 'on'}`} onClick=${() => setRaw(false)}>${isMd ? 'Rendered' : 'Highlighted'}</button>
+              <button class=${`seg ${raw ? 'on' : ''}`} onClick=${() => setRaw(true)}>Raw</button>
+            </span>`}
+            <button class="btn icon ghost" title="Download" onClick=${() => downloadFile(envId, path)}><${Icon} name="download" /></button>
+            <button class="btn icon ghost" title="Close" onClick=${onClose}><${Icon} name="x" /></button>
+          </span>
+        </figcaption>
+      </figure>
+    </div>`;
+}
+
+function SentFiles({ paths, envId, acts }) {
+  const thumb = (f) => fileUrl(envId, f, `&access_token=${encodeURIComponent(token.get())}`);
+  return html`<div class="sent-files">${paths.map((f) => html`
+    <span class="file-chip" key=${f} title=${f}>
+      ${isImagePath(f) ? html`<img src=${thumb(f)} alt="" />` : html`<${Icon} name="file" size=${12} />`}
+      <span class="file-chip-name">${fileName(f)}</span>
+      <${FileActions} path=${f} acts=${acts} />
+    </span>`)}</div>`;
+}
+
+function Bubble({ it, envId, acts }) {
+  if (it.kind === 'user') {
+    return html`<div class="bubble user"><pre>${clipText(it.text)}</pre>
+      ${it.files && it.files.length > 0 && html`<${SentFiles} paths=${it.files} envId=${envId} acts=${acts} />`}</div>`;
+  }
+  if (it.kind === 'assistant')
+    return html`<div class="bubble assistant md" onClick=${onFileActionClick(acts)} dangerouslySetInnerHTML=${{ __html: markdown(it.text) }}></div>`;
   if (it.kind === 'system') return html`<div class="chip">${it.text}</div>`;
   if (it.kind === 'control') return html`<div class="divider">${it.text}</div>`;
   if (it.kind === 'tool_use')
-    return html`<details class="tool"><summary><${Icon} name="terminal" size=${13} /><span class="tool-name">${it.name}</span><span class="tool-prev">${toolPreview(it.input)}</span></summary><pre>${clipText(JSON.stringify(it.input, null, 2))}</pre></details>`;
+    return html`<details class="tool"><summary><${Icon} name="terminal" size=${13} /><span class="tool-name">${it.name}</span><span class="tool-prev"><${FileRefs} text=${toolPreview(it.input)} acts=${acts} /></span></summary><pre>${clipText(JSON.stringify(it.input, null, 2))}</pre></details>`;
   if (it.kind === 'tool_result') {
     const text = resultText(it.content);
-    return html`<details class=${`tool result ${it.isError ? 'err' : ''}`}><summary><${Icon} name="output" size=${13} /><span class="tool-prev">${resultPreview(text) || '(no output)'}</span></summary><pre>${clipText(text)}</pre></details>`;
+    return html`<details class=${`tool result ${it.isError ? 'err' : ''}`}><summary><${Icon} name="output" size=${13} /><span class="tool-prev"><${FileRefs} text=${resultPreview(text) || '(no output)'} acts=${acts} /></span></summary><pre><${FileRefs} text=${clipText(text)} acts=${acts} /></pre></details>`;
   }
   if (it.kind === 'result')
     return html`<div class="result-foot ${it.isError ? 'err' : ''}">${it.isError ? 'Failed' : 'Done'} · ${fmtDur(it.ms)} · $${(it.cost || 0).toFixed(2)}</div>`;
@@ -468,6 +652,12 @@ function SessionView({ session, now, onChanged, onMenu, onDelete, onArchive, onR
   const [input, setInput] = useState('');
   const [effort, setEffort] = useState(''); // per-message effort; '' = the session's own
   const [copied, setCopied] = useState(false);
+  const [previewPath, setPreviewPath] = useState(null); // workspace file shown in FileModal
+  const fileActs = { preview: setPreviewPath, download: (path) => downloadFile(session.envId, path) };
+  // Files attached to the next message: uploaded as soon as they're added.
+  const [attachments, setAttachments] = useState([]); // { key, name, preview, path, error }
+  const [dragging, setDragging] = useState(false);
+  const fileInput = useRef(null);
   // One paste from the user's own machine: SSH in and resume this session in interactive Claude.
   const resumeCmd = session.sshResumeHint ? `ssh -t root@${location.hostname} '${session.sshResumeHint}'` : '';
   const copyResume = async () => { if (await copyText(resumeCmd)) { setCopied(true); setTimeout(() => setCopied(false), 1500); } };
@@ -553,14 +743,37 @@ function SessionView({ session, now, onChanged, onMenu, onDelete, onArchive, onR
     setHasNew(false);
   };
 
+  const addFiles = (files) => {
+    for (const file of files) {
+      const key = `${Date.now()}-${Math.random()}`;
+      const preview = /^image\/(png|jpe?g|gif|webp)$/.test(file.type) ? URL.createObjectURL(file) : null;
+      setAttachments((prev) => [...prev, { key, name: file.name || 'pasted.png', preview, path: null, error: '' }]);
+      uploadFile(session.envId, file).then(
+        (r) => setAttachments((prev) => prev.map((a) => (a.key === key ? { ...a, path: r.path } : a))),
+        (e) => setAttachments((prev) => prev.map((a) => (a.key === key ? { ...a, error: e.message } : a))),
+      );
+    }
+  };
+  const removeAttachment = (key) => setAttachments((prev) => {
+    const gone = prev.find((a) => a.key === key);
+    if (gone && gone.preview) URL.revokeObjectURL(gone.preview);
+    return prev.filter((a) => a.key !== key);
+  });
+  const uploading = attachments.some((a) => !a.path && !a.error);
+
   const running = busy || session.status === 'running';
   const send = useCallback(async () => {
     const prompt = input.trim();
-    if (!prompt || running) return;
+    if (!prompt || running || uploading) return;
+    const files = attachments.filter((a) => a.path).map((a) => a.path);
     setInput(''); setBusy(true);
-    try { await api(`/sessions/${id}/messages`, { method: 'POST', body: JSON.stringify({ prompt, ...(effort ? { effort } : {}) }) }); onChanged && onChanged(); }
-    catch (e) { setBusy(false); alert(`Send failed: ${e.message}`); }
-  }, [input, effort, running, id]);
+    try {
+      await api(`/sessions/${id}/messages`, { method: 'POST', body: JSON.stringify({ prompt, ...(effort ? { effort } : {}), ...(files.length ? { files } : {}) }) });
+      attachments.forEach((a) => a.preview && URL.revokeObjectURL(a.preview));
+      setAttachments([]);
+      onChanged && onChanged();
+    } catch (e) { setBusy(false); setInput(prompt); alert(`Send failed: ${e.message}`); }
+  }, [input, effort, running, uploading, attachments, id]);
   const interrupt = async () => { try { await api(`/sessions/${id}/interrupt`, { method: 'POST' }); } catch (e) { alert(e.message); } };
   const startEdit = () => { setDraft(session.title || ''); setEditing(true); };
   const saveTitle = async () => {
@@ -605,26 +818,44 @@ function SessionView({ session, now, onChanged, onMenu, onDelete, onArchive, onR
       <div class="transcript" ref=${scroller} onScroll=${onTranscriptScroll}>
         ${loading && !loadErr && html`<div class="muted pad">loading history…</div>`}
         ${loadErr && html`<div class="err-msg">could not load history: ${loadErr}</div>`}
-        ${items.map((it, i) => html`<${Bubble} it=${it} key=${i} />`)}
-        ${running && partial && html`<div class="bubble assistant live"><div class="md" dangerouslySetInnerHTML=${{ __html: toHtml(partial) }}></div><span class="cursor">▍</span></div>`}
+        ${items.map((it, i) => html`<${Bubble} it=${it} key=${i} envId=${session.envId} acts=${fileActs} />`)}
+        ${running && partial && html`<div class="bubble assistant live" onClick=${onFileActionClick(fileActs)}><div class="md" dangerouslySetInnerHTML=${{ __html: toHtml(partial) }}></div><span class="cursor">▍</span></div>`}
         ${running && !partial && !loading && html`<div class="muted pad">…thinking</div>`}
       </div>
       ${hasNew && html`<button class="new-msgs" onClick=${jumpToBottom}>↓ New messages</button>`}
-      <footer class="composer">
-        <textarea
-          value=${input}
-          placeholder=${running ? 'Turn in progress…' : 'Message Claude (Enter to send, Shift+Enter for newline)'}
-          disabled=${running}
-          onInput=${(e) => setInput(e.target.value)}
-          onKeyDown=${(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
-        ></textarea>
+      <footer class=${`composer ${dragging ? 'dragging' : ''}`}
+        onDragOver=${(e) => { if ([...e.dataTransfer.types].includes('Files')) { e.preventDefault(); setDragging(true); } }}
+        onDragLeave=${(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragging(false); }}
+        onDrop=${(e) => { e.preventDefault(); setDragging(false); if (e.dataTransfer.files.length) addFiles([...e.dataTransfer.files]); }}>
+        <div class="composer-main">
+          ${attachments.length > 0 && html`<div class="attach-row">${attachments.map((a) => html`
+            <span class=${`attach-chip ${a.error ? 'err' : ''}`} key=${a.key} title=${a.error || a.name}>
+              ${a.preview ? html`<img src=${a.preview} alt="" />` : html`<${Icon} name="file" size=${13} />`}
+              <span class="attach-name">${a.error ? `${a.name}: ${a.error}` : a.name}</span>
+              ${!a.path && !a.error && html`<span class="muted small">uploading…</span>`}
+              <button class="lnk icon-lnk" title="Remove" onClick=${() => removeAttachment(a.key)}><${Icon} name="x" size=${12} /></button>
+            </span>`)}</div>`}
+          <textarea
+            value=${input}
+            placeholder=${running ? 'Turn in progress…' : 'Message Claude (Enter to send, Shift+Enter for newline)'}
+            disabled=${running}
+            onInput=${(e) => setInput(e.target.value)}
+            onPaste=${(e) => { const files = [...((e.clipboardData && e.clipboardData.files) || [])]; if (files.length) { e.preventDefault(); addFiles(files); } }}
+            onKeyDown=${(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
+          ></textarea>
+        </div>
         <div class="composer-side">
-          <${EffortSelect} levels=${effortsFor(session.agent, session.model)} value=${effort} onChange=${setEffort} />
+          <div class="composer-tools">
+            <button class="btn icon ghost" title="Attach files (or drop or paste them)" disabled=${running} onClick=${() => fileInput.current && fileInput.current.click()}><${Icon} name="paperclip" /></button>
+            <input type="file" multiple hidden ref=${fileInput} onChange=${(e) => { addFiles([...e.target.files]); e.target.value = ''; }} />
+            <${EffortSelect} levels=${effortsFor(session.agent, session.model)} value=${effort} onChange=${setEffort} />
+          </div>
           ${running
             ? html`<button class="btn ghost" onClick=${interrupt}>Interrupt</button>`
-            : html`<button class="btn ghost" onClick=${send} disabled=${!input.trim()}>Send</button>`}
+            : html`<button class="btn ghost" onClick=${send} disabled=${!input.trim() || uploading}>${uploading ? 'Uploading…' : 'Send'}</button>`}
         </div>
       </footer>
+      ${previewPath && html`<${FileModal} envId=${session.envId} path=${previewPath} onClose=${() => setPreviewPath(null)} />`}
     </section>`;
 }
 
