@@ -492,7 +492,7 @@ function Bubble({ it }) {
   return html`<div class="raw"><pre>${clipText(it.text)}</pre></div>`;
 }
 
-function SessionView({ session, now, onChanged, onMenu, onDelete, onArchive, onRestore }) {
+function SessionView({ session, env, now, onChanged, onMenu, onDelete, onArchive, onRestore }) {
   const [items, setItems] = useState([]);
   const [partial, setPartial] = useState('');
   const [loading, setLoading] = useState(true);
@@ -604,11 +604,14 @@ function SessionView({ session, now, onChanged, onMenu, onDelete, onArchive, onR
     catch (e) { alert(`Rename failed: ${e.message}`); }
   };
 
+  const envLabel = env ? env.displayName || env.name : session.envName;
   return html`
     <section class="main">
       <header class="bar">
+        <button class="mobile-only btn icon ghost" onClick=${onMenu} title="Environments & sessions"><${Icon} name="menu" /></button>
+        <div class="bar-body">
+        <div class="bar-env" title="Environment">${envLabel}</div>
         <div class="bar-title">
-          <button class="mobile-only btn icon ghost" onClick=${onMenu} title="Environments & sessions"><${Icon} name="menu" /></button>
           <${StateIcon} state=${sessionState(session)} />
           ${editing
             ? html`<input class="rename" value=${draft}
@@ -622,17 +625,19 @@ function SessionView({ session, now, onChanged, onMenu, onDelete, onArchive, onR
                   ? html`<button class="lnk icon-lnk" onClick=${onRestore} title="Restore session"><${Icon} name="restore" size=${13} /></button>`
                   : html`<button class="lnk icon-lnk" onClick=${onArchive} title="Archive session (hide, keep transcript)"><${Icon} name="archive" size=${13} /></button>`}
                 <button class="lnk icon-lnk danger" onClick=${onDelete} title="Delete session"><${Icon} name="trash" size=${13} /></button>`}
-          ${resumeCmd && html`<button class="lnk" onClick=${copyResume} title="Copy a command to continue this session in Claude in your own terminal"><${Icon} name="terminal" size=${13} /> ${copied ? 'Copied' : 'Resume'}</button>`}
+          ${resumeCmd && html`<button class="lnk" onClick=${copyResume} title="Copy a command to continue this session in Claude in your own terminal"><${Icon} name="terminal" size=${13} /> ${copied ? 'Copied' : html`<span class="resume-label">Resume</span>`}</button>`}
         </div>
-        <div class="bar-meta muted">
-          ${session.envName} · <span class="agent-tag">${agentLabel(session.agent)}</span> · ${session.model || 'default model'} · $${(session.costUsd || 0).toFixed(4)}
-          ${session.claudeSessionId && html` · <code title="agent session id">${session.claudeSessionId.slice(0, 8)}</code>`}
-        </div>
-        <div class="bar-meta muted" title=${`started ${fullTime(session.createdAt)}\nlast active ${fullTime(session.lastActivityAt)}`}>
-          started ${fmtAgo(session.createdAt, true)} ·${' '}
+        <div class="bar-meta"><div class="bar-meta-items">
+          ${envLabel !== session.envName && html`<span title="Environment folder name">${session.envName}</span>`}
+          <span class="agent-tag">${agentLabel(session.agent)}</span>
+          <span>${session.model || 'default model'}</span>
+          <span>$${(session.costUsd || 0).toFixed(4)}</span>
+          ${session.claudeSessionId && html`<span><code title="agent session id">${session.claudeSessionId.slice(0, 8)}</code></span>`}
+          <span title=${`started ${fullTime(session.createdAt)}`}>started ${fmtAgo(session.createdAt, true)}</span>
           ${session.status === 'running'
             ? html`<${WorkingTag} since=${session.lastActivityAt} now=${now} />`
-            : html`last active ${fmtAgo(session.lastActivityAt, true)}`}
+            : html`<span title=${`last active ${fullTime(session.lastActivityAt)}`}>last active ${fmtAgo(session.lastActivityAt, true)}</span>`}
+        </div></div>
         </div>
       </header>
       <div class="transcript" ref=${scroller} onScroll=${onTranscriptScroll}>
@@ -1638,7 +1643,7 @@ function App() {
         onDeleteSession=${deleteSession} onArchiveSession=${archiveSession} onRestoreSession=${restoreSession} />
       <div class="scrim" onClick=${() => setDrawerOpen(false)}></div>
       ${selected
-        ? html`<${SessionView} session=${selected} key=${selected.id} now=${now} onChanged=${refresh} onMenu=${() => setDrawerOpen(true)} onDelete=${() => deleteSession(selected)} onArchive=${() => archiveSession(selected)} onRestore=${() => restoreSession(selected)} />`
+        ? html`<${SessionView} session=${selected} env=${envs.find((e) => e.id === selected.envId)} key=${selected.id} now=${now} onChanged=${refresh} onMenu=${() => setDrawerOpen(true)} onDelete=${() => deleteSession(selected)} onArchive=${() => archiveSession(selected)} onRestore=${() => restoreSession(selected)} />`
         : html`<section class="main empty">
             <button class="mobile-only menu-btn btn icon ghost" onClick=${() => setDrawerOpen(true)} title="Environments & sessions"><${Icon} name="menu" /></button>
             <div class="muted">

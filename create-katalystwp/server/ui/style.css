@@ -180,14 +180,19 @@ input[type="checkbox"] { accent-color: var(--text); }
 .main { display: flex; flex-direction: column; min-height: 0; position: relative; }
 .main.empty { align-items: center; justify-content: center; }
 .main.empty > .muted { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center; padding: 24px; }
-.bar { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 16px; row-gap: 2px; align-items: center;
-  padding: 10px 20px; border-bottom: 1px solid var(--line); background: var(--bg); }
-.bar > .bar-title { grid-column: 1; grid-row: 1; }
-.bar > .bar-meta:nth-child(2) { grid-column: 1 / -1; grid-row: 2; padding-left: 16px; }
-.bar > .bar-meta:nth-child(3) { grid-column: 2; grid-row: 1; text-align: right; }
+/* session header, on the transcript's text column: environment, then the
+   session title, then one line of details */
+.bar { display: flex; align-items: flex-start; gap: 8px; padding: 12px var(--col) 10px; border-bottom: 1px solid var(--line); background: var(--bg); }
+.bar-body { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.bar-env { padding-left: 20px; }
+.bar-env { font-size: 12px; font-weight: 500; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bar-title { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.bar-title strong { font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 4px; }
-.bar-meta { font-size: 12px; color: var(--muted); }
+.bar-title strong { font-size: 16px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 4px; }
+.bar-meta { margin-left: 20px; overflow: hidden; font-size: 12px; color: var(--muted); }
+/* every item starts with a separator, and the row is shifted left so the one
+   starting each line (wrapped lines included) is clipped */
+.bar-meta-items { display: flex; flex-wrap: wrap; align-items: center; row-gap: 2px; margin-left: -14px; }
+.bar-meta-items > *::before { content: "·"; display: inline-block; width: 14px; text-align: center; color: var(--faint); }
 .bar-meta .agent-tag { color: var(--text); }
 .mobile-only { display: none; } /* shown only on narrow screens (see media query) */
 .scrim { display: none; } /* drawer backdrop; only exists visually on mobile */
@@ -393,9 +398,8 @@ input[type="checkbox"] { accent-color: var(--text); }
   .main.empty .menu-btn { position: absolute; top: 12px; left: 12px; }
 
   :root { --col: 14px; }
-  .bar { padding: 8px 12px; }
-  .bar > .bar-meta:nth-child(2) { padding-left: 0; }
-  .bar > .bar-meta:nth-child(3) { grid-column: 1 / -1; grid-row: 3; text-align: left; }
+  .bar { padding: 8px var(--col) 8px 6px; gap: 4px; }
+  .resume-label { display: none; }
   .bubble.user { max-width: 92%; }
   .transcript { padding-top: 14px; }
   .composer { flex-direction: column; padding: 10px var(--col) 12px; }
