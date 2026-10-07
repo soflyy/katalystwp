@@ -610,7 +610,7 @@ function SessionView({ session, env, now, onChanged, onMenu, onDelete, onArchive
       <header class="bar">
         <button class="mobile-only btn icon ghost" onClick=${onMenu} title="Environments & sessions"><${Icon} name="menu" /></button>
         <div class="bar-body">
-        <div class="bar-env" title="Environment">${envLabel}</div>
+        <div class="bar-env" title=${`Environment · folder ${session.envName}`}>${envLabel}</div>
         <div class="bar-title">
           <${StateIcon} state=${sessionState(session)} />
           ${editing
@@ -628,15 +628,14 @@ function SessionView({ session, env, now, onChanged, onMenu, onDelete, onArchive
           ${resumeCmd && html`<button class="lnk" onClick=${copyResume} title="Copy a command to continue this session in Claude in your own terminal"><${Icon} name="terminal" size=${13} /> ${copied ? 'Copied' : html`<span class="resume-label">Resume</span>`}</button>`}
         </div>
         <div class="bar-meta"><div class="bar-meta-items">
-          ${envLabel !== session.envName && html`<span title="Environment folder name">${session.envName}</span>`}
-          <span class="agent-tag">${agentLabel(session.agent)}</span>
-          <span>${session.model || 'default model'}</span>
-          <span>$${(session.costUsd || 0).toFixed(4)}</span>
-          ${session.claudeSessionId && html`<span><code title="agent session id">${session.claudeSessionId.slice(0, 8)}</code></span>`}
+          <span title=${session.model || 'default model'}>${modelLabel(session.agent, session.model)}</span>
+          ${/@(\w+)$/.test(session.model || '') && html`<span>${session.model.match(/@(\w+)$/)[1]} effort</span>`}
+          <span title=${`$${(session.costUsd || 0).toFixed(4)}`}>$${(session.costUsd || 0).toFixed(2)}</span>
           <span title=${`started ${fullTime(session.createdAt)}`}>started ${fmtAgo(session.createdAt, true)}</span>
           ${session.status === 'running'
             ? html`<${WorkingTag} since=${session.lastActivityAt} now=${now} />`
             : html`<span title=${`last active ${fullTime(session.lastActivityAt)}`}>last active ${fmtAgo(session.lastActivityAt, true)}</span>`}
+          ${session.claudeSessionId && html`<span class="bar-id" title="Agent session id (Resume uses it)">${session.claudeSessionId.slice(0, 8)}</span>`}
         </div></div>
         </div>
       </header>
@@ -824,6 +823,13 @@ const MODEL_CUSTOM = '__custom__';
 const NO_EFFORT = new Set(['opencode']);
 const defaultModel = (agent) => (MODELS[agent] || MODELS.claude)[0].id;
 const stripEffort = (model) => String(model || '').replace(/@(low|medium|high|xhigh|max)$/i, '');
+// "Claude Opus 5.5" for a session's agent and model id (aliases resolved).
+const modelLabel = (agent, model) => {
+  const base = stripEffort(model);
+  const m = (MODELS[agent || 'claude'] || []).find((x) => x.id === base || (x.aliases || []).includes(base));
+  const label = m ? m.label : base;
+  return label && label !== 'Default' ? `${agentLabel(agent)} ${label}` : agentLabel(agent);
+};
 const withEffort = (model, effort) => (effort ? `${stripEffort(model)}@${effort}` : model);
 // Effort levels the given agent/model accepts; [] when unknown (custom ids can
 // carry their own @effort).
