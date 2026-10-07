@@ -72,10 +72,12 @@ export class SessionStore {
 
   // Boot: a session left `running` had its turn killed when the server stopped.
   // The claude session jsonl persists on disk, so it's resumable — mark it
-  // interrupted so the next message resumes it.
+  // interrupted so the next message resumes it. Sessions from before seenAt
+  // existed count as seen up to their last activity.
   reconcile() {
     return this.mutate((data) => {
       for (const s of Object.values(data.sessions)) {
+        if (!s.seenAt) s.seenAt = s.lastActivityAt || s.createdAt;
         if (s.status === 'running') {
           s.status = 'interrupted';
           s.lastError = s.lastError || 'turn interrupted (server restart)';

@@ -201,11 +201,17 @@ export function buildRoutes(config, registry, manager, sessions, presets, settin
 
     route('GET', '/sessions/:id', async (ctx) => ctx.send(200, publicSession(sessionOr404(ctx)))),
 
+    // Rename ({ title }) and/or mark the latest reply seen ({ seen: true }).
     route('PATCH', '/sessions/:id', async (ctx) => {
       const s = sessionOr404(ctx);
-      const title = String(ctx.body.title || '').replace(/\s+/g, ' ').trim();
-      if (!title) throw httpErr(400, 'title is required');
-      const updated = await sessions.store.update(s.id, { title: title.slice(0, 200) });
+      const patch = {};
+      if (ctx.body.seen) patch.seenAt = new Date().toISOString();
+      if (ctx.body.title !== undefined || !ctx.body.seen) {
+        const title = String(ctx.body.title || '').replace(/\s+/g, ' ').trim();
+        if (!title) throw httpErr(400, 'title is required');
+        patch.title = title.slice(0, 200);
+      }
+      const updated = await sessions.store.update(s.id, patch);
       ctx.send(200, publicSession(updated));
     }),
 

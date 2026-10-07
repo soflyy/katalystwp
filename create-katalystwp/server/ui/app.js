@@ -113,6 +113,8 @@ const ICONS = {
   terminal: '<path d="M12 19h8"/><path d="m4 17 6-6-6-6"/>',
   output: '<path d="m15 10 5 5-5 5"/><path d="M4 4v7a4 4 0 0 0 4 4h12"/>',
   alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+  circleX: '<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
+  circleAlert: '<circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/>',
 };
 function Icon({ name, size = 14 }) {
   return html`<svg class="icon" width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" dangerouslySetInnerHTML=${{ __html: ICONS[name] || '' }}></svg>`;
@@ -144,7 +146,30 @@ function ActionMenu({ items }) {
 
 const TRANSIENT_ENV = ['scaffolding', 'setting-up', 'configuring', 'destroying', 'duplicating'];
 
-function EnvRow({ env, onAction, onTag, onToggle }) {
+// What a session or env is doing, as one icon: a spinner while working, a red
+// circle-x when the last turn (or the env's build) failed, an amber circle-!
+// when a turn was cut off, and otherwise a dot: blue for a reply not yet seen,
+// green for an env that's up, a grey ring for one that's stopped. A seen, idle
+// session shows nothing. An env takes the most urgent state of its sessions.
+const isUnread = (s) => s.status !== 'running' && !!s.seenAt && String(s.lastActivityAt) > String(s.seenAt);
+const sessionState = (s) => (s.status === 'running' ? 'working' : s.status === 'error' ? 'failed' : s.status === 'interrupted' ? 'interrupted' : 'idle');
+function envState(env, sessions) {
+  if (env.status === 'failed') return 'failed';
+  if (env.status === 'stopped') return 'off';
+  if (TRANSIENT_ENV.includes(env.status)) return 'working';
+  const states = sessions.map(sessionState);
+  if (states.includes('failed')) return 'failed';
+  if (states.includes('interrupted') || env.status === 'degraded') return 'interrupted';
+  if (states.includes('working')) return 'working';
+  return 'up';
+}
+const STATE_TITLES = { working: 'Working', failed: 'Failed', interrupted: 'Interrupted', unread: 'New reply', up: 'Up', off: 'Stopped', idle: '' };
+function StateIcon({ state }) {
+  const icon = { failed: 'circleX', interrupted: 'circleAlert' }[state];
+  return html`<span class=${`state ${state}`} title=${STATE_TITLES[state]}>${icon && html`<${Icon} name=${icon} size=${13} />`}</span>`;
+}
+
+function EnvRow({ env, sessions = [], onAction, onTag, onToggle }) {
   const building = TRANSIENT_ENV.includes(env.status);
   const up = env.status === 'running' || env.status === 'degraded';
   // Link to the WP site on the SAME host the UI was loaded from (not the
@@ -152,13 +177,15 @@ function EnvRow({ env, onAction, onTag, onToggle }) {
   // server's IP, and still works from inside the devbox via localhost.
   const wpUrl = envSiteUrl(env, env.port);
   const warnings = env.setupWarnings || [];
+  const unread = sessions.filter(isUnread).length;
   const act = (a) => () => onAction(a, env);
   // A click anywhere on the row that isn't a control opens or closes its sessions.
   const onRowClick = (e) => { if (onToggle && !e.target.closest('a, button, input, select, textarea, .menu-wrap')) onToggle(); };
   return html`
     <div class="env" onClick=${onRowClick}>
       <div class="env-top">
-        <${StatusDot} status=${env.status} /> <span class="env-name" title=${env.displayName ? `${env.displayName} · ${env.name}` : env.name}>${env.displayName || env.name}</span>
+        <${StateIcon} state=${envState(env, sessions)} /> <span class=${`env-name ${unread ? 'unread' : ''}`} title=${env.displayName ? `${env.displayName} · ${env.name}` : env.name}>${env.displayName || env.name}</span>
+        ${unread > 0 && html`<span class="unread-count" title=${`${unread} session${unread === 1 ? '' : 's'} with a reply not yet seen`}>${unread}</span>`}
         <a class="env-port" href=${wpUrl} target="_blank" rel="noreferrer" title="Open the site front end" onClick=${(e) => e.stopPropagation()}>:${env.port}</a>
         ${(env.appPorts || []).map((p) => html`<a class="env-port" href=${envSiteUrl(env, p.host)} target="_blank" rel="noreferrer" title=${`App port → container :${p.container}`} onClick=${(e) => e.stopPropagation()}>:${p.host}</a>`)}
         ${up && html`<button class="env-admin" title="One-click passwordless wp-admin login" onClick=${(e) => { e.stopPropagation(); onAction('admin-login', env); }}>Admin <${Icon} name="external" size=${12} /></button>`}
@@ -200,8 +227,8 @@ function SessionItem({ s, selectedId, onSelect, onDelete, onArchive, onRestore, 
   return html`
     <div class=${`sess ${s.id === selectedId ? 'active' : ''} ${s.archived ? 'archived' : ''}`} onClick=${() => onSelect(s.id)}>
       <div class="sess-top">
-        <${StatusDot} status=${s.status} />
-        <span class="sess-title">${s.title || s.id}</span>
+        <${StateIcon} state=${sessionState(s) === 'idle' && isUnread(s) ? 'unread' : sessionState(s)} />
+        <span class=${`sess-title ${isUnread(s) ? 'unread' : ''}`}>${s.title || s.id}</span>
         ${running
           ? html`<${WorkingTag} since=${s.lastActivityAt} now=${now} />`
           : html`<span class="sess-time" title=${`last active ${fullTime(s.lastActivityAt)}`}>${fmtAgo(s.lastActivityAt)}</span>`}
@@ -365,7 +392,7 @@ function Sidebar({ name, onRename, sessions, envs, selectedId, now, onSelect, on
               const itemProps = { selectedId, now, onSelect, onDelete: onDeleteSession, onArchive: onArchiveSession, onRestore: onRestoreSession };
               return html`
                 <div class="env-group" key=${groupKey === null ? e.id : `${groupKey}:${e.id}`}>
-                  <${EnvRow} env=${e} onAction=${onEnvAction} onTag=${setQuery} onToggle=${() => toggle(e.id)} />
+                  <${EnvRow} env=${e} sessions=${active} onAction=${onEnvAction} onTag=${setQuery} onToggle=${() => toggle(e.id)} />
                   <button class="sess-toggle" onClick=${() => toggle(e.id)}>
                     <span class="chev"><${Icon} name=${open ? 'down' : 'right'} size=${12} /></span>
                     ${active.length} session${active.length === 1 ? '' : 's'}
@@ -582,7 +609,7 @@ function SessionView({ session, now, onChanged, onMenu, onDelete, onArchive, onR
       <header class="bar">
         <div class="bar-title">
           <button class="mobile-only btn icon ghost" onClick=${onMenu} title="Environments & sessions"><${Icon} name="menu" /></button>
-          <${StatusDot} status=${session.status} />
+          <${StateIcon} state=${sessionState(session)} />
           ${editing
             ? html`<input class="rename" value=${draft}
                 ref=${(el) => { if (el && document.activeElement !== el) { el.focus(); el.select(); } }}
@@ -1474,6 +1501,21 @@ function App() {
   useEffect(() => { if (authed) { refresh(); const t = setInterval(refresh, 3000); return () => clearInterval(t); } }, [authed, refresh]);
   useEffect(() => { if (authed) api('/settings').then((d) => d.name && setBoxName(d.name)).catch(() => {}); }, [authed]);
   useEffect(() => { document.title = `${boxName} · Claude sessions`; }, [boxName]);
+
+  // Opening a session, or a reply landing while it's on screen, marks it seen.
+  const [visible, setVisible] = useState(document.visibilityState === 'visible');
+  useEffect(() => {
+    const onVisibility = () => setVisible(document.visibilityState === 'visible');
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, []);
+  const viewing = sessions.find((s) => s.id === selectedId);
+  const viewingUnread = !!viewing && isUnread(viewing);
+  useEffect(() => {
+    if (!visible || !viewingUnread) return;
+    setSessions((list) => list.map((s) => (s.id === viewing.id ? { ...s, seenAt: s.lastActivityAt } : s)));
+    api(`/sessions/${viewing.id}`, { method: 'PATCH', body: JSON.stringify({ seen: true }) }).catch(() => {});
+  }, [visible, viewingUnread, viewing && viewing.id]);
 
   // Tick once a second ONLY while a session is actively running, so the live
   // "working Ns" counters advance smoothly without re-rendering when idle.

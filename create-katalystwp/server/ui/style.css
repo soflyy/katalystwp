@@ -52,13 +52,29 @@ input[type="checkbox"] { accent-color: var(--text); }
 
 /* status dots */
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: var(--grey); flex: none; }
-.dot.running { background: var(--accent); box-shadow: 0 0 0 3px rgba(96,165,250,.2); animation: pulse 1.6s ease-in-out infinite; }
+.dot.running { background: var(--green); }
 .dot.idle { background: var(--green); }
 .dot.degraded, .dot.interrupted { background: var(--amber); }
 .dot.error, .dot.failed { background: var(--red); }
-.dot.stopped { background: var(--grey); }
-.dot.scaffolding, .dot.setting-up, .dot.configuring, .dot.duplicating, .dot.destroying { background: var(--accent); opacity: .6; }
-@keyframes pulse { 50% { box-shadow: 0 0 0 5px rgba(96,165,250,.08); } }
+.dot.stopped { background: none; border: 1.5px solid var(--grey); }
+.dot.scaffolding, .dot.setting-up, .dot.configuring, .dot.duplicating, .dot.destroying { background: var(--muted); opacity: .6; }
+
+/* session and env state: spinner = working, red/amber icons = failed/interrupted,
+   blue dot = reply not yet seen, green = env up, grey ring = env stopped */
+.state { width: 14px; height: 14px; flex: none; display: inline-flex; align-items: center; justify-content: center; }
+.state.unread::before, .state.up::before, .state.off::before { content: ""; width: 8px; height: 8px; border-radius: 50%; box-sizing: border-box; }
+.state.unread::before { background: var(--accent); }
+.state.up::before { background: var(--green); }
+.state.off::before { border: 1.5px solid var(--grey); }
+.state.working::before { content: ""; width: 11px; height: 11px; border-radius: 50%; box-sizing: border-box;
+  border: 2px solid var(--line2); border-top-color: var(--text); animation: spin .8s linear infinite; }
+.state.failed { color: var(--red); }
+.state.interrupted { color: var(--amber); }
+.sess-title.unread { font-weight: 600; color: var(--text); }
+.env-name.unread { font-weight: 700; }
+.unread-count { flex: none; min-width: 18px; padding: 0 6px; border-radius: 99px; background: var(--accent); color: var(--on-light);
+  font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; }
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* sidebar */
 .sidebar { background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
@@ -147,7 +163,7 @@ input[type="checkbox"] { accent-color: var(--text); }
 .sess-top { display: flex; align-items: center; gap: 8px; }
 .sess-title { flex: 1; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sess-time { flex: none; font-size: 11px; color: var(--faint); }
-.sess-time.working, .bar-meta .working { color: var(--accent); }
+.sess-time.working, .bar-meta .working { color: var(--text); }
 .sess-sub { font-size: 11.5px; margin-top: 2px; padding-left: 16px; color: var(--faint); }
 .sess-del, .sess-arch { flex: none; opacity: 0; padding: 2px; }
 .sess:hover .sess-del, .sess.active .sess-del,
