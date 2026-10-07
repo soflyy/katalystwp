@@ -102,7 +102,7 @@ input[type="checkbox"] { accent-color: var(--text); }
 
 /* environment rows */
 .env-group { border-top: 1px solid var(--line); }
-.env { padding: 10px 16px 4px; }
+.env { padding: 10px 16px 4px; cursor: pointer; }
 .env-top { display: flex; align-items: center; gap: 8px; min-height: 24px; }
 .env-name { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .env-port { flex: none; color: var(--muted); font: 12px var(--mono); text-decoration: none; padding: 1px 4px; border-radius: 4px; }

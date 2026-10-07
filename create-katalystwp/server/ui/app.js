@@ -144,7 +144,7 @@ function ActionMenu({ items }) {
 
 const TRANSIENT_ENV = ['scaffolding', 'setting-up', 'configuring', 'destroying', 'duplicating'];
 
-function EnvRow({ env, onAction, onTag }) {
+function EnvRow({ env, onAction, onTag, onToggle }) {
   const building = TRANSIENT_ENV.includes(env.status);
   const up = env.status === 'running' || env.status === 'degraded';
   // Link to the WP site on the SAME host the UI was loaded from (not the
@@ -153,8 +153,10 @@ function EnvRow({ env, onAction, onTag }) {
   const wpUrl = envSiteUrl(env, env.port);
   const warnings = env.setupWarnings || [];
   const act = (a) => () => onAction(a, env);
+  // A click anywhere on the row that isn't a control opens or closes its sessions.
+  const onRowClick = (e) => { if (onToggle && !e.target.closest('a, button, input, select, textarea, .menu-wrap')) onToggle(); };
   return html`
-    <div class="env">
+    <div class="env" onClick=${onRowClick}>
       <div class="env-top">
         <${StatusDot} status=${env.status} /> <span class="env-name" title=${env.displayName ? `${env.displayName} · ${env.name}` : env.name}>${env.displayName || env.name}</span>
         <a class="env-port" href=${wpUrl} target="_blank" rel="noreferrer" title="Open the site front end" onClick=${(e) => e.stopPropagation()}>:${env.port}</a>
@@ -307,9 +309,13 @@ function Sidebar({ name, onRename, sessions, envs, selectedId, now, onSelect, on
     next.has(id) ? next.delete(id) : next.add(id);
     return next;
   });
-  // The environment holding the selected session is always shown open, so a
-  // freshly-created/selected session is visible without a manual expand.
+  // The environment holding the selected session opens when the selection
+  // changes, so a freshly-created/selected session is visible without a manual
+  // expand, and it can still be closed afterwards.
   const selEnvId = (sessions.find((s) => s.id === selectedId) || {}).envId;
+  useEffect(() => {
+    if (selEnvId) setExpanded((prev) => (prev.has(selEnvId) ? prev : new Set(prev).add(selEnvId)));
+  }, [selEnvId]);
 
   return html`
     <aside class="sidebar">
@@ -354,12 +360,12 @@ function Sidebar({ name, onRename, sessions, envs, selectedId, now, onSelect, on
               // (20 sessions) can show just the two you're working on.
               const active = envSessions.filter((s) => !s.archived);
               const archived = envSessions.filter((s) => s.archived);
-              const open = expanded.has(e.id) || e.id === selEnvId;
+              const open = expanded.has(e.id);
               const showArch = archOpen.has(e.id);
               const itemProps = { selectedId, now, onSelect, onDelete: onDeleteSession, onArchive: onArchiveSession, onRestore: onRestoreSession };
               return html`
                 <div class="env-group" key=${groupKey === null ? e.id : `${groupKey}:${e.id}`}>
-                  <${EnvRow} env=${e} onAction=${onEnvAction} onTag=${setQuery} />
+                  <${EnvRow} env=${e} onAction=${onEnvAction} onTag=${setQuery} onToggle=${() => toggle(e.id)} />
                   <button class="sess-toggle" onClick=${() => toggle(e.id)}>
                     <span class="chev"><${Icon} name=${open ? 'down' : 'right'} size=${12} /></span>
                     ${active.length} session${active.length === 1 ? '' : 's'}
