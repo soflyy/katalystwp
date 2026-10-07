@@ -903,6 +903,11 @@ function LogViewer({ env, onClose }) {
     </div>`;
 }
 
+// Env names are folder and Docker project names (lowercase letters, digits and
+// hyphens, 2-39 chars), so typed text is turned into one and kept as the label.
+const envSlug = (text) => text.trim().toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+  .replace(/[^a-z0-9]+/g, '-').replace(/^-+/, '').slice(0, 39).replace(/-+$/, '');
+
 function NewEnvModal({ presets, onClose, onCreate, onSavePreset, onUpdatePreset, onDeletePreset }) {
   const [name, setName] = useState('');
   const [prompt, setPrompt] = useState('');
@@ -984,7 +989,9 @@ function NewEnvModal({ presets, onClose, onCreate, onSavePreset, onUpdatePreset,
     let provision;
     try { provision = buildCustom(); } catch (e) { setErr(e.message); return; }
     setBusy(true);
-    try { await onCreate(name.trim() || undefined, provision || undefined, prompt.trim() || undefined, presetIds, agent, withEffort(model.trim(), effort) || undefined); }
+    const label = name.trim();
+    const slug = envSlug(label);
+    try { await onCreate(slug.length >= 2 ? slug : undefined, provision || undefined, prompt.trim() || undefined, presetIds, agent, withEffort(model.trim(), effort) || undefined, label !== slug ? label : undefined); }
     catch (e) { setErr(e.message); setBusy(false); }
   };
   const savePreset = async () => {
@@ -1017,7 +1024,8 @@ function NewEnvModal({ presets, onClose, onCreate, onSavePreset, onUpdatePreset,
         <h3>New environment</h3>
         <p class="muted">Builds a fresh WordPress devbox (≈1 min). Compose one or more presets, and/or add custom provisioning below. Leave it all blank for a plain site.</p>
         <label>Name (optional)
-          <input value=${name} placeholder="my-devbox (a-z, 0-9, -)" onInput=${(e) => setName(e.target.value)} />
+          <input value=${name} placeholder="my-devbox" onInput=${(e) => setName(e.target.value)} />
+          ${name.trim() && envSlug(name) !== name.trim() && html`<span class="hint">Created as ${envSlug(name).length >= 2 ? envSlug(name) : 'an auto-generated name'}</span>`}
         </label>
         <${AgentPicker} agent=${agent} model=${model} effort=${effort} prompt=${prompt}
           onAgent=${setAgent} onModel=${setModel} onEffort=${setEffort} onPrompt=${setPrompt} onSubmit=${create}
@@ -1488,8 +1496,9 @@ function App() {
       setRenameEnv(null); await refresh();
     } catch (e) { alert(`Rename failed: ${e.message}`); }
   };
-  const createEnv = async (name, provision, prompt, presetIds, agent, model) => {
-    await api('/environments', { method: 'POST', body: JSON.stringify({ name, provision, prompt, presetIds, agent, model }) });
+  const createEnv = async (name, provision, prompt, presetIds, agent, model, displayName) => {
+    const env = await api('/environments', { method: 'POST', body: JSON.stringify({ name, provision, prompt, presetIds, agent, model }) });
+    if (displayName) await api(`/environments/${env.id}`, { method: 'PATCH', body: JSON.stringify({ displayName }) }).catch(() => {});
     setShowNewEnv(false); refresh();
   };
   const savePreset = async (preset) => {
