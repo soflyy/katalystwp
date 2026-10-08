@@ -3,8 +3,8 @@
 // there): previews and downloads for the UI, and uploads a message can attach.
 
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, realpath, stat, chown, rm, open, readdir } from 'node:fs/promises';
-import { join, extname, basename, isAbsolute, relative, resolve } from 'node:path';
+import { mkdir, realpath, stat, lstat, readlink, chown, rm, open, readdir } from 'node:fs/promises';
+import { join, extname, basename, dirname, isAbsolute, relative, resolve } from 'node:path';
 import { httpErr } from './ops.js';
 
 const HOME = '/home/node';
@@ -26,11 +26,39 @@ async function resolveInWorkspace(env, path) {
   const root = await realpath(workspaceOf(env));
   let real;
   try { real = await realpath(resolve(root, rel)); } catch {
-    real = isAbsolute(path) ? null : await findBySuffix(root, rel);
+    real = await followContainerLinks(root, rel) || (isAbsolute(path) ? null : await findBySuffix(root, rel));
     if (!real) throw httpErr(404, 'file not found');
   }
   if (real !== root && !real.startsWith(root + '/')) throw httpErr(400, 'path must be inside /home/node');
   return real;
+}
+
+// Plugins and themes are symlinked into wp/ with container paths
+// (/home/node/src/my-plugin), which don't exist on the host. Walk `rel` one
+// part at a time, reading such a link as a path in the workspace. Null if
+// anything is missing or leads outside it.
+async function followContainerLinks(root, rel) {
+  const parts = rel.split('/').filter((p) => p && p !== '.');
+  let cur = root;
+  for (let links = 0; parts.length;) {
+    const part = parts.shift();
+    const next = part === '..' ? dirname(cur) : join(cur, part);
+    if (next !== root && !next.startsWith(root + '/')) return null;
+    let st;
+    try { st = await lstat(next); } catch { return null; }
+    if (!st.isSymbolicLink()) { cur = next; continue; }
+    if (++links > 40) return null;
+    const target = await readlink(next);
+    if (isAbsolute(target)) {
+      const inHome = relative(HOME, target);
+      if (inHome.startsWith('..') || isAbsolute(inHome)) return null;
+      cur = root;
+      parts.unshift(...inHome.split('/').filter((p) => p && p !== '.'));
+    } else {
+      parts.unshift(...target.split('/').filter((p) => p && p !== '.'));
+    }
+  }
+  return cur;
 }
 
 // Agents name files relative to the repo they cd'd into (admin/src/pages/
