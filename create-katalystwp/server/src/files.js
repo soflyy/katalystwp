@@ -20,6 +20,7 @@ const workspaceOf = (env) => join(env.dir, 'workspace');
 // resolves (symlinks included) outside it. A relative path that isn't under
 // /home/node is looked up as relative to the folder an agent was working in.
 async function resolveInWorkspace(env, path) {
+  if (path.startsWith('~/')) path = HOME + path.slice(1); // the agent's home
   const rel = isAbsolute(path) ? relative(HOME, path) : path;
   if (!rel || rel.startsWith('..') || isAbsolute(rel)) throw httpErr(400, 'path must be inside /home/node');
   const root = await realpath(workspaceOf(env));

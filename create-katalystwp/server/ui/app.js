@@ -459,10 +459,10 @@ function markdown(text) {
   return out;
 }
 
-// Workspace file paths (absolute under /home/node, or relative to it with a
-// directory part) get preview and download buttons, served by
+// Workspace file paths (absolute under /home/node or ~/, or relative to it
+// with a directory part) get preview and download buttons, served by
 // /environments/:id/files.
-const FILE_PATH_SRC = String.raw`(?:\/home\/node\/|\.{1,2}\/|\.?[\w@-][\w@.-]*\/)[\w@./-]*[\w@-]\.[A-Za-z0-9]{1,8}`;
+const FILE_PATH_SRC = String.raw`(?:\/home\/node\/|~\/|\.{1,2}\/|\.?[\w@-][\w@.-]*\/)[\w@./-]*[\w@-]\.[A-Za-z0-9]{1,8}`;
 const FILE_PATH = new RegExp(String.raw`(?<![\w@:/.-])${FILE_PATH_SRC}(?![\w@/-]|\.[A-Za-z0-9])`, 'g');
 const FILE_PATH_ONLY = new RegExp(`^${FILE_PATH_SRC}$`);
 const isFilePath = (s) => FILE_PATH_ONLY.test(String(s || '').trim());
