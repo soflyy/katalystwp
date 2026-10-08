@@ -596,10 +596,14 @@ function SessionView({ session, env, now, onChanged, onMenu, onDelete, onArchive
   }, [input, effort, running, id]);
   const interrupt = async () => { try { await api(`/sessions/${id}/interrupt`, { method: 'POST' }); } catch (e) { alert(e.message); } };
   const startEdit = () => { setDraft(session.title || ''); setEditing(true); };
+  const cancelledEdit = useRef(false);
+  // Enter and Escape both end the edit by blurring, so it saves (or not) once.
   const saveTitle = async () => {
     const t = draft.replace(/\s+/g, ' ').trim();
+    const cancelled = cancelledEdit.current;
+    cancelledEdit.current = false;
     setEditing(false);
-    if (!t || t === session.title) return;
+    if (cancelled || !t || t === session.title) return;
     try { await api(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify({ title: t }) }); onChanged && onChanged(); }
     catch (e) { alert(`Rename failed: ${e.message}`); }
   };
@@ -617,7 +621,7 @@ function SessionView({ session, env, now, onChanged, onMenu, onDelete, onArchive
             ? html`<input class="rename" value=${draft}
                 ref=${(el) => { if (el && document.activeElement !== el) { el.focus(); el.select(); } }}
                 onInput=${(e) => setDraft(e.target.value)}
-                onKeyDown=${(e) => { if (e.key === 'Enter') { e.preventDefault(); saveTitle(); } else if (e.key === 'Escape') setEditing(false); }}
+                onKeyDown=${(e) => { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); } else if (e.key === 'Escape') { cancelledEdit.current = true; e.target.blur(); } }}
                 onBlur=${saveTitle} />`
             : html`<strong title="Double-click to rename" onDblClick=${startEdit}>${session.title || id}</strong>
                 <button class="lnk icon-lnk" onClick=${startEdit} title="Rename"><${Icon} name="pencil" size=${13} /></button>
