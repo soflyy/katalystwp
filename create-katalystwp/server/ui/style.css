@@ -18,7 +18,8 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
   font: 14px/1.5 var(--sans); -webkit-font-smoothing: antialiased; }
 /* dvh keeps the composer above mobile browser chrome; vh is the fallback */
 #root, .layout { height: 100vh; height: 100dvh; }
-.layout { display: grid; grid-template-columns: 380px 1fr; }
+/* minmax(0, …): the main pane shrinks to the window instead of to its widest content */
+.layout { display: grid; grid-template-columns: 380px minmax(0, 1fr); }
 .muted { color: var(--muted); }
 .pad { padding: 12px 16px; }
 .small { font-size: 12px; }
@@ -382,7 +383,11 @@ input[type="checkbox"] { accent-color: var(--text); }
 @media (max-width: 760px) and (pointer: coarse) {
   .composer textarea, .modal input, .modal select, .modal textarea, .env-search, .effort-pick select { font-size: 16px; }
 }
-@media (max-width: 760px) {
+/* A narrower sidebar on mid-size windows keeps the main pane at 620px or more. */
+@media (min-width: 961px) and (max-width: 1200px) {
+  .layout { grid-template-columns: 340px minmax(0, 1fr); }
+}
+@media (max-width: 960px) {
   /* The main pane fills the viewport; the sidebar becomes an off-canvas
      drawer over it (app.js toggles .drawer-open — hamburger opens, scrim /
      ✕ / picking a session closes). The session view stays mounted while the
@@ -396,7 +401,8 @@ input[type="checkbox"] { accent-color: var(--text); }
   .layout.drawer-open .scrim { display: block; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 19; }
   .mobile-only { display: inline-flex; }
   .main.empty .menu-btn { position: absolute; top: 12px; left: 12px; }
-
+}
+@media (max-width: 760px) {
   :root { --col: 14px; }
   .bar { padding: 8px var(--col) 8px 6px; gap: 4px; }
   .resume-label { display: none; }

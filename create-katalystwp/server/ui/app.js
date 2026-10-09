@@ -1489,7 +1489,7 @@ function App() {
   // On phones the sidebar is an off-canvas drawer (see the mobile media query).
   // It starts open there so first load shows the env/session list, not an
   // empty pane; on desktop the class is inert (sidebar is always visible).
-  const [drawerOpen, setDrawerOpen] = useState(() => window.matchMedia('(max-width: 760px)').matches);
+  const [drawerOpen, setDrawerOpen] = useState(() => window.matchMedia('(max-width: 960px)').matches);
   const [newSession, setNewSession] = useState(null); // null | { preselect? }
   const [showNewEnv, setShowNewEnv] = useState(false);
   const [logEnvId, setLogEnvId] = useState(null);
