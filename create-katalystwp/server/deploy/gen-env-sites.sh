@@ -24,11 +24,13 @@
 # Bound to the public IP only, Caddy and docker share each port cleanly.
 #
 # No `tls` directive here ON PURPOSE: the Caddyfile's GLOBAL options block
-# (Caddyfile.example) sets `cert_issuer acme { profile shortlived }`, which
-# every site inherits. Per-site tls directives are a trap: Caddy rejects the
-# config when a hostname spans site blocks with different host sets
-# ("appears in more than one automation policy"). This import therefore
-# REQUIRES that global cert_issuer in the importing Caddyfile.
+# (Caddyfile.example) sets the issuer — `cert_issuer acme { profile shortlived }`
+# on a public box with a bare-IP cert, or `acme_dns <provider> …` (DNS-01) on a
+# private box — and every site inherits it. Per-site tls directives are a trap:
+# Caddy rejects the config when a hostname spans site blocks with different
+# host sets ("appears in more than one automation policy"). This import
+# therefore REQUIRES a global issuer in the importing Caddyfile. With DNS-01,
+# pass ONLY the domain as <host>: IP certificates can't be issued that way.
 #
 # Keep the range in sync with the server's WP_PORT_RANGE (env sites AND their
 # app ports allocate from it). Regenerate + reload after widening the range.

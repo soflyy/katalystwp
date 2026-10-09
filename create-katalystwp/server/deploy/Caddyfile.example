@@ -1,10 +1,31 @@
-# HTTPS for the devbox control plane on a BARE IP — no domain needed.
+# HTTPS for the devbox control plane. Two modes — pick ONE issuer block below:
 #
-# Let's Encrypt issues publicly-trusted certificates for IP addresses (GA since
-# 2026-01) via the "shortlived" ACME profile: ~6-day lifetime, auto-renewed by
-# Caddy (needs Caddy >= 2.10). ACME validation (http-01 / tls-alpn-01) always
-# happens on ports 80/443, so both must be reachable from the internet even
-# though the site itself serves on :4000.
+# (A) PUBLIC box, BARE IP — no domain needed. Let's Encrypt issues
+#     publicly-trusted certificates for IP addresses (GA since 2026-01) via the
+#     "shortlived" ACME profile: ~6-day lifetime, auto-renewed by Caddy (needs
+#     Caddy >= 2.10). ACME validation (http-01 / tls-alpn-01) always happens on
+#     ports 80/443, so both must be reachable from the internet even though the
+#     site itself serves on :4000.
+#
+# (B) PRIVATE box (VPN / Tailscale only, 80/443 closed) — DNS-01 with a DOMAIN.
+#     Caddy proves ownership by writing a TXT record at the DNS provider, so
+#     only OUTBOUND traffic is needed. Requires: the domain's DNS at a provider
+#     Caddy has a plugin for (Cloudflare shown), a Caddy build with that plugin
+#     (`caddy add-package github.com/caddy-dns/cloudflare` swaps /usr/bin/caddy
+#     in place; then `apt-mark hold caddy` so a package upgrade can't replace it
+#     with a plugin-less binary), and a DNS-edit API token scoped to that one
+#     zone, handed to Caddy via a root-only env file + systemd drop-in:
+#       /etc/caddy/cloudflare.env (0600):      CLOUDFLARE_API_TOKEN=…
+#       /etc/systemd/system/caddy.service.d/cloudflare.conf:
+#         [Service]
+#         EnvironmentFile=/etc/caddy/cloudflare.env
+#     Normal 90-day certs (Caddy renews a month early). IP certificates CANNOT
+#     be issued over DNS-01: use the domain everywhere (site addresses below,
+#     gen-env-sites.sh's host arg, DEVBOX_PUBLIC_HOST, and the MCP URL clients
+#     use). Keep the domain's A record "DNS only" (grey cloud) — a proxied
+#     record points at Cloudflare, which can't reach a private box and doesn't
+#     forward :4000 / :9xxx anyway. Note `caddy validate` runs without the
+#     systemd env and reports the token as '' — the service itself is fine.
 #
 # Pair this with devbox-server bound to loopback so raw HTTP is unreachable
 # from outside — in the server's env (e.g. /etc/devbox/devbox.env):
@@ -41,20 +62,25 @@
 
 {
 	email you@example.com
-	# Let's Encrypt "shortlived" ACME profile (~6-day certs, Caddy auto-renews).
-	# Global (cert_issuer) rather than per-site tls blocks: the bare-IP cert
-	# REQUIRES this profile, and per-site tls directives make Caddy reject the
-	# config when the same hostname spans site blocks with different host sets
-	# ("appears in more than one automation policy"). Domain certs are simply
-	# short-lived too.
+	# Issuer is GLOBAL on purpose, not per-site tls blocks: per-site tls
+	# directives make Caddy reject the config when the same hostname spans site
+	# blocks with different host sets ("appears in more than one automation
+	# policy"), and gen-env-sites.sh's block relies on inheriting this.
+
+	# (A) public box, bare IP: Let's Encrypt "shortlived" profile (~6-day
+	#     certs; the bare-IP cert REQUIRES it; domain certs are short-lived too).
 	cert_issuer acme {
 		profile shortlived
 	}
+
+	# (B) private box, domain only — replace the block above with:
+	# acme_dns cloudflare {env.CLOUDFLARE_API_TOKEN}
 }
 
 # import /etc/caddy/env-sites.caddy
 
-# Control plane. With a domain, list both:  <your-ip>:4000, <your-domain>:4000 {
+# Control plane. Mode (A) with a domain, list both:  <your-ip>:4000, <your-domain>:4000 {
+# Mode (B): the domain only:                           <your-domain>:4000 {
 <your-ip>:4000 {
 	# JSON payloads (session transcripts, env lists) compress ~10x; Caddy
 	# skips compression for SSE streams automatically.
