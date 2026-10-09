@@ -144,6 +144,15 @@ renews them. Bind the server to loopback (`DEVBOX_BIND=127.0.0.1`,
 reachable for ACME validation. SSE session streams work through the proxy
 unchanged.
 
+**Private box (VPN / Tailscale only, 80/443 closed)?** Use a domain and the
+DNS-01 challenge instead: Caddy proves ownership by writing a TXT record at
+your DNS provider, so only outbound traffic is needed. `Caddyfile.example`
+mode (B) has the recipe (Cloudflare plugin via `caddy add-package`, a zone-scoped
+API token in a root-only env file, `acme_dns cloudflare …` as the global
+issuer). IP certificates can't be issued this way, so the bare IP drops out of
+every address: `gen-env-sites.sh` gets the domain only, `DEVBOX_PUBLIC_HOST` is
+the domain, and clients use `https://<your-domain>:4000/mcp`.
+
 This covers the control plane (API/MCP/UI/token). To serve the **per-env
 WordPress sites** over HTTPS too, the same IP certificate applies (it's valid
 for any port): generate one Caddy site block for the whole env port range with
