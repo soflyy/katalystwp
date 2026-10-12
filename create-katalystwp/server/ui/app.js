@@ -128,6 +128,8 @@ const ICONS = {
   file: '<path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/>',
   output: '<path d="m15 10 5 5-5 5"/><path d="M4 4v7a4 4 0 0 0 4 4h12"/>',
   alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+  circleX: '<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
+  circleAlert: '<circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/>',
 };
 function Icon({ name, size = 14 }) {
   return html`<svg class="icon" width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" dangerouslySetInnerHTML=${{ __html: ICONS[name] || '' }}></svg>`;
@@ -159,7 +161,30 @@ function ActionMenu({ items }) {
 
 const TRANSIENT_ENV = ['scaffolding', 'setting-up', 'configuring', 'destroying', 'duplicating'];
 
-function EnvRow({ env, onAction, onTag }) {
+// What a session or env is doing, as one icon: a spinner while working, a red
+// circle-x when the last turn (or the env's build) failed, an amber circle-!
+// when a turn was cut off, and otherwise a dot: blue for a reply not yet seen,
+// green for an env that's up, a grey ring for one that's stopped. A seen, idle
+// session shows nothing. An env takes the most urgent state of its sessions.
+const isUnread = (s) => s.status !== 'running' && !!s.seenAt && String(s.lastActivityAt) > String(s.seenAt);
+const sessionState = (s) => (s.status === 'running' ? 'working' : s.status === 'error' ? 'failed' : s.status === 'interrupted' ? 'interrupted' : 'idle');
+function envState(env, sessions) {
+  if (env.status === 'failed') return 'failed';
+  if (env.status === 'stopped') return 'off';
+  if (TRANSIENT_ENV.includes(env.status)) return 'working';
+  const states = sessions.map(sessionState);
+  if (states.includes('failed')) return 'failed';
+  if (states.includes('interrupted') || env.status === 'degraded') return 'interrupted';
+  if (states.includes('working')) return 'working';
+  return 'up';
+}
+const STATE_TITLES = { working: 'Working', failed: 'Failed', interrupted: 'Interrupted', unread: 'New reply', up: 'Up', off: 'Stopped', idle: '' };
+function StateIcon({ state }) {
+  const icon = { failed: 'circleX', interrupted: 'circleAlert' }[state];
+  return html`<span class=${`state ${state}`} title=${STATE_TITLES[state]}>${icon && html`<${Icon} name=${icon} size=${13} />`}</span>`;
+}
+
+function EnvRow({ env, sessions = [], onAction, onTag, onToggle }) {
   const building = TRANSIENT_ENV.includes(env.status);
   const up = env.status === 'running' || env.status === 'degraded';
   // Link to the WP site on the SAME host the UI was loaded from (not the
@@ -167,11 +192,15 @@ function EnvRow({ env, onAction, onTag }) {
   // server's IP, and still works from inside the devbox via localhost.
   const wpUrl = envSiteUrl(env, env.port);
   const warnings = env.setupWarnings || [];
+  const unread = sessions.filter(isUnread).length;
   const act = (a) => () => onAction(a, env);
+  // A click anywhere on the row that isn't a control opens or closes its sessions.
+  const onRowClick = (e) => { if (onToggle && !e.target.closest('a, button, input, select, textarea, .menu-wrap')) onToggle(); };
   return html`
-    <div class="env">
+    <div class="env" onClick=${onRowClick}>
       <div class="env-top">
-        <${StatusDot} status=${env.status} /> <span class="env-name" title=${env.displayName ? `${env.displayName} · ${env.name}` : env.name}>${env.displayName || env.name}</span>
+        <${StateIcon} state=${envState(env, sessions)} /> <span class=${`env-name ${unread ? 'unread' : ''}`} title=${env.displayName ? `${env.displayName} · ${env.name}` : env.name}>${env.displayName || env.name}</span>
+        ${unread > 0 && html`<span class="unread-count" title=${`${unread} session${unread === 1 ? '' : 's'} with a reply not yet seen`}>${unread}</span>`}
         <a class="env-port" href=${wpUrl} target="_blank" rel="noreferrer" title="Open the site front end" onClick=${(e) => e.stopPropagation()}>:${env.port}</a>
         ${(env.appPorts || []).map((p) => html`<a class="env-port" href=${envSiteUrl(env, p.host)} target="_blank" rel="noreferrer" title=${`App port → container :${p.container}`} onClick=${(e) => e.stopPropagation()}>:${p.host}</a>`)}
         ${up && html`<button class="env-admin" title="One-click passwordless wp-admin login" onClick=${(e) => { e.stopPropagation(); onAction('admin-login', env); }}>Admin <${Icon} name="external" size=${12} /></button>`}
@@ -213,8 +242,8 @@ function SessionItem({ s, selectedId, onSelect, onDelete, onArchive, onRestore, 
   return html`
     <div class=${`sess ${s.id === selectedId ? 'active' : ''} ${s.archived ? 'archived' : ''}`} onClick=${() => onSelect(s.id)}>
       <div class="sess-top">
-        <${StatusDot} status=${s.status} />
-        <span class="sess-title">${s.title || s.id}</span>
+        <${StateIcon} state=${sessionState(s) === 'idle' && isUnread(s) ? 'unread' : sessionState(s)} />
+        <span class=${`sess-title ${isUnread(s) ? 'unread' : ''}`}>${s.title || s.id}</span>
         ${running
           ? html`<${WorkingTag} since=${s.lastActivityAt} now=${now} />`
           : html`<span class="sess-time" title=${`last active ${fullTime(s.lastActivityAt)}`}>${fmtAgo(s.lastActivityAt)}</span>`}
@@ -322,9 +351,13 @@ function Sidebar({ name, onRename, sessions, envs, selectedId, now, onSelect, on
     next.has(id) ? next.delete(id) : next.add(id);
     return next;
   });
-  // The environment holding the selected session is always shown open, so a
-  // freshly-created/selected session is visible without a manual expand.
+  // The environment holding the selected session opens when the selection
+  // changes, so a freshly-created/selected session is visible without a manual
+  // expand, and it can still be closed afterwards.
   const selEnvId = (sessions.find((s) => s.id === selectedId) || {}).envId;
+  useEffect(() => {
+    if (selEnvId) setExpanded((prev) => (prev.has(selEnvId) ? prev : new Set(prev).add(selEnvId)));
+  }, [selEnvId]);
 
   return html`
     <aside class="sidebar">
@@ -369,12 +402,12 @@ function Sidebar({ name, onRename, sessions, envs, selectedId, now, onSelect, on
               // (20 sessions) can show just the two you're working on.
               const active = envSessions.filter((s) => !s.archived);
               const archived = envSessions.filter((s) => s.archived);
-              const open = expanded.has(e.id) || e.id === selEnvId;
+              const open = expanded.has(e.id);
               const showArch = archOpen.has(e.id);
               const itemProps = { selectedId, now, onSelect, onDelete: onDeleteSession, onArchive: onArchiveSession, onRestore: onRestoreSession };
               return html`
                 <div class="env-group" key=${groupKey === null ? e.id : `${groupKey}:${e.id}`}>
-                  <${EnvRow} env=${e} onAction=${onEnvAction} onTag=${setQuery} />
+                  <${EnvRow} env=${e} sessions=${active} onAction=${onEnvAction} onTag=${setQuery} onToggle=${() => toggle(e.id)} />
                   <button class="sess-toggle" onClick=${() => toggle(e.id)}>
                     <span class="chev"><${Icon} name=${open ? 'down' : 'right'} size=${12} /></span>
                     ${active.length} session${active.length === 1 ? '' : 's'}
@@ -643,7 +676,7 @@ function Bubble({ it, envId, acts }) {
   return html`<div class="raw"><pre>${clipText(it.text)}</pre></div>`;
 }
 
-function SessionView({ session, now, onChanged, onMenu, onDelete, onArchive, onRestore }) {
+function SessionView({ session, env, now, onChanged, onMenu, onDelete, onArchive, onRestore }) {
   const [items, setItems] = useState([]);
   const [partial, setPartial] = useState('');
   const [loading, setLoading] = useState(true);
@@ -776,25 +809,32 @@ function SessionView({ session, now, onChanged, onMenu, onDelete, onArchive, onR
   }, [input, effort, running, uploading, attachments, id]);
   const interrupt = async () => { try { await api(`/sessions/${id}/interrupt`, { method: 'POST' }); } catch (e) { alert(e.message); } };
   const startEdit = () => { setDraft(session.title || ''); setEditing(true); };
+  const cancelledEdit = useRef(false);
+  // Enter and Escape both end the edit by blurring, so it saves (or not) once.
   const saveTitle = async () => {
     const t = draft.replace(/\s+/g, ' ').trim();
+    const cancelled = cancelledEdit.current;
+    cancelledEdit.current = false;
     setEditing(false);
-    if (!t || t === session.title) return;
+    if (cancelled || !t || t === session.title) return;
     try { await api(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify({ title: t }) }); onChanged && onChanged(); }
     catch (e) { alert(`Rename failed: ${e.message}`); }
   };
 
+  const envLabel = env ? env.displayName || env.name : session.envName;
   return html`
     <section class="main">
       <header class="bar">
+        <button class="mobile-only btn icon ghost" onClick=${onMenu} title="Environments & sessions"><${Icon} name="menu" /></button>
+        <div class="bar-body">
+        <div class="bar-env" title=${`Environment · folder ${session.envName}`}>${envLabel}</div>
         <div class="bar-title">
-          <button class="mobile-only btn icon ghost" onClick=${onMenu} title="Environments & sessions"><${Icon} name="menu" /></button>
-          <${StatusDot} status=${session.status} />
+          <${StateIcon} state=${sessionState(session)} />
           ${editing
             ? html`<input class="rename" value=${draft}
                 ref=${(el) => { if (el && document.activeElement !== el) { el.focus(); el.select(); } }}
                 onInput=${(e) => setDraft(e.target.value)}
-                onKeyDown=${(e) => { if (e.key === 'Enter') { e.preventDefault(); saveTitle(); } else if (e.key === 'Escape') setEditing(false); }}
+                onKeyDown=${(e) => { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); } else if (e.key === 'Escape') { cancelledEdit.current = true; e.target.blur(); } }}
                 onBlur=${saveTitle} />`
             : html`<strong title="Double-click to rename" onDblClick=${startEdit}>${session.title || id}</strong>
                 <button class="lnk icon-lnk" onClick=${startEdit} title="Rename"><${Icon} name="pencil" size=${13} /></button>
@@ -802,17 +842,18 @@ function SessionView({ session, now, onChanged, onMenu, onDelete, onArchive, onR
                   ? html`<button class="lnk icon-lnk" onClick=${onRestore} title="Restore session"><${Icon} name="restore" size=${13} /></button>`
                   : html`<button class="lnk icon-lnk" onClick=${onArchive} title="Archive session (hide, keep transcript)"><${Icon} name="archive" size=${13} /></button>`}
                 <button class="lnk icon-lnk danger" onClick=${onDelete} title="Delete session"><${Icon} name="trash" size=${13} /></button>`}
-          ${resumeCmd && html`<button class="lnk" onClick=${copyResume} title="Copy a command to continue this session in Claude in your own terminal"><${Icon} name="terminal" size=${13} /> ${copied ? 'Copied' : 'Resume'}</button>`}
+          ${resumeCmd && html`<button class="lnk" onClick=${copyResume} title="Copy a command to continue this session in Claude in your own terminal"><${Icon} name="terminal" size=${13} /> ${copied ? 'Copied' : html`<span class="resume-label">Resume</span>`}</button>`}
         </div>
-        <div class="bar-meta muted">
-          ${session.envName} · <span class="agent-tag">${agentLabel(session.agent)}</span> · ${session.model || 'default model'} · $${(session.costUsd || 0).toFixed(4)}
-          ${session.claudeSessionId && html` · <code title="agent session id">${session.claudeSessionId.slice(0, 8)}</code>`}
-        </div>
-        <div class="bar-meta muted" title=${`started ${fullTime(session.createdAt)}\nlast active ${fullTime(session.lastActivityAt)}`}>
-          started ${fmtAgo(session.createdAt, true)} ·${' '}
+        <div class="bar-meta"><div class="bar-meta-items">
+          <span title=${session.model || 'default model'}>${modelLabel(session.agent, session.model)}</span>
+          ${/@(\w+)$/.test(session.model || '') && html`<span>${session.model.match(/@(\w+)$/)[1]} effort</span>`}
+          <span title=${`$${(session.costUsd || 0).toFixed(4)}`}>$${(session.costUsd || 0).toFixed(2)}</span>
+          <span title=${`started ${fullTime(session.createdAt)}`}>started ${fmtAgo(session.createdAt, true)}</span>
           ${session.status === 'running'
             ? html`<${WorkingTag} since=${session.lastActivityAt} now=${now} />`
-            : html`last active ${fmtAgo(session.lastActivityAt, true)}`}
+            : html`<span title=${`last active ${fullTime(session.lastActivityAt)}`}>last active ${fmtAgo(session.lastActivityAt, true)}</span>`}
+          ${session.claudeSessionId && html`<span class="bar-id" title="Agent session id (Resume uses it)">${session.claudeSessionId.slice(0, 8)}</span>`}
+        </div></div>
         </div>
       </header>
       <div class="transcript" ref=${scroller} onScroll=${onTranscriptScroll}>
@@ -1017,6 +1058,13 @@ const MODEL_CUSTOM = '__custom__';
 const NO_EFFORT = new Set(['opencode']);
 const defaultModel = (agent) => (MODELS[agent] || MODELS.claude)[0].id;
 const stripEffort = (model) => String(model || '').replace(/@(low|medium|high|xhigh|max)$/i, '');
+// "Claude Opus 5.5" for a session's agent and model id (aliases resolved).
+const modelLabel = (agent, model) => {
+  const base = stripEffort(model);
+  const m = (MODELS[agent || 'claude'] || []).find((x) => x.id === base || (x.aliases || []).includes(base));
+  const label = m ? m.label : base;
+  return label && label !== 'Default' ? `${agentLabel(agent)} ${label}` : agentLabel(agent);
+};
 const withEffort = (model, effort) => (effort ? `${stripEffort(model)}@${effort}` : model);
 // Effort levels the given agent/model accepts; [] when unknown (custom ids can
 // carry their own @effort).
@@ -1134,6 +1182,11 @@ function LogViewer({ env, onClose }) {
     </div>`;
 }
 
+// Env names are folder and Docker project names (lowercase letters, digits and
+// hyphens, 2-39 chars), so typed text is turned into one and kept as the label.
+const envSlug = (text) => text.trim().toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+  .replace(/[^a-z0-9]+/g, '-').replace(/^-+/, '').slice(0, 39).replace(/-+$/, '');
+
 function NewEnvModal({ presets, onClose, onCreate, onSavePreset, onUpdatePreset, onDeletePreset }) {
   const [name, setName] = useState('');
   const [prompt, setPrompt] = useState('');
@@ -1215,7 +1268,9 @@ function NewEnvModal({ presets, onClose, onCreate, onSavePreset, onUpdatePreset,
     let provision;
     try { provision = buildCustom(); } catch (e) { setErr(e.message); return; }
     setBusy(true);
-    try { await onCreate(name.trim() || undefined, provision || undefined, prompt.trim() || undefined, presetIds, agent, withEffort(model.trim(), effort) || undefined); }
+    const label = name.trim();
+    const slug = envSlug(label);
+    try { await onCreate(slug.length >= 2 ? slug : undefined, provision || undefined, prompt.trim() || undefined, presetIds, agent, withEffort(model.trim(), effort) || undefined, label !== slug ? label : undefined); }
     catch (e) { setErr(e.message); setBusy(false); }
   };
   const savePreset = async () => {
@@ -1248,7 +1303,8 @@ function NewEnvModal({ presets, onClose, onCreate, onSavePreset, onUpdatePreset,
         <h3>New environment</h3>
         <p class="muted">Builds a fresh WordPress devbox (≈1 min). Compose one or more presets, and/or add custom provisioning below. Leave it all blank for a plain site.</p>
         <label>Name (optional)
-          <input value=${name} placeholder="my-devbox (a-z, 0-9, -)" onInput=${(e) => setName(e.target.value)} />
+          <input value=${name} placeholder="my-devbox" onInput=${(e) => setName(e.target.value)} />
+          ${name.trim() && envSlug(name) !== name.trim() && html`<span class="hint">Created as ${envSlug(name).length >= 2 ? envSlug(name) : 'an auto-generated name'}</span>`}
         </label>
         <${AgentPicker} agent=${agent} model=${model} effort=${effort} prompt=${prompt}
           onAgent=${setAgent} onModel=${setModel} onEffort=${setEffort} onPrompt=${setPrompt} onSubmit=${create}
@@ -1668,7 +1724,7 @@ function App() {
   // On phones the sidebar is an off-canvas drawer (see the mobile media query).
   // It starts open there so first load shows the env/session list, not an
   // empty pane; on desktop the class is inert (sidebar is always visible).
-  const [drawerOpen, setDrawerOpen] = useState(() => window.matchMedia('(max-width: 760px)').matches);
+  const [drawerOpen, setDrawerOpen] = useState(() => window.matchMedia('(max-width: 960px)').matches);
   const [newSession, setNewSession] = useState(null); // null | { preselect? }
   const [showNewEnv, setShowNewEnv] = useState(false);
   const [logEnvId, setLogEnvId] = useState(null);
@@ -1691,6 +1747,21 @@ function App() {
   useEffect(() => { if (authed) { refresh(); const t = setInterval(refresh, 3000); return () => clearInterval(t); } }, [authed, refresh]);
   useEffect(() => { if (authed) api('/settings').then((d) => d.name && setBoxName(d.name)).catch(() => {}); }, [authed]);
   useEffect(() => { document.title = `${boxName} · Claude sessions`; }, [boxName]);
+
+  // Opening a session, or a reply landing while it's on screen, marks it seen.
+  const [visible, setVisible] = useState(document.visibilityState === 'visible');
+  useEffect(() => {
+    const onVisibility = () => setVisible(document.visibilityState === 'visible');
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, []);
+  const viewing = sessions.find((s) => s.id === selectedId);
+  const viewingUnread = !!viewing && isUnread(viewing);
+  useEffect(() => {
+    if (!visible || !viewingUnread) return;
+    setSessions((list) => list.map((s) => (s.id === viewing.id ? { ...s, seenAt: s.lastActivityAt } : s)));
+    api(`/sessions/${viewing.id}`, { method: 'PATCH', body: JSON.stringify({ seen: true }) }).catch(() => {});
+  }, [visible, viewingUnread, viewing && viewing.id]);
 
   // Tick once a second ONLY while a session is actively running, so the live
   // "working Ns" counters advance smoothly without re-rendering when idle.
@@ -1719,8 +1790,9 @@ function App() {
       setRenameEnv(null); await refresh();
     } catch (e) { alert(`Rename failed: ${e.message}`); }
   };
-  const createEnv = async (name, provision, prompt, presetIds, agent, model) => {
-    await api('/environments', { method: 'POST', body: JSON.stringify({ name, provision, prompt, presetIds, agent, model }) });
+  const createEnv = async (name, provision, prompt, presetIds, agent, model, displayName) => {
+    const env = await api('/environments', { method: 'POST', body: JSON.stringify({ name, provision, prompt, presetIds, agent, model }) });
+    if (displayName) await api(`/environments/${env.id}`, { method: 'PATCH', body: JSON.stringify({ displayName }) }).catch(() => {});
     setShowNewEnv(false); refresh();
   };
   const savePreset = async (preset) => {
@@ -1812,7 +1884,7 @@ function App() {
         onDeleteSession=${deleteSession} onArchiveSession=${archiveSession} onRestoreSession=${restoreSession} />
       <div class="scrim" onClick=${() => setDrawerOpen(false)}></div>
       ${selected
-        ? html`<${SessionView} session=${selected} key=${selected.id} now=${now} onChanged=${refresh} onMenu=${() => setDrawerOpen(true)} onDelete=${() => deleteSession(selected)} onArchive=${() => archiveSession(selected)} onRestore=${() => restoreSession(selected)} />`
+        ? html`<${SessionView} session=${selected} env=${envs.find((e) => e.id === selected.envId)} key=${selected.id} now=${now} onChanged=${refresh} onMenu=${() => setDrawerOpen(true)} onDelete=${() => deleteSession(selected)} onArchive=${() => archiveSession(selected)} onRestore=${() => restoreSession(selected)} />`
         : html`<section class="main empty">
             <button class="mobile-only menu-btn btn icon ghost" onClick=${() => setDrawerOpen(true)} title="Environments & sessions"><${Icon} name="menu" /></button>
             <div class="muted">
@@ -1831,4 +1903,8 @@ function App() {
     </div>`;
 }
 
-render(html`<${App} />`, document.getElementById('root'));
+// Clear the static "Loading…" placeholder: render() diffs against existing
+// children rather than replacing them, so it would stay below the app.
+const root = document.getElementById('root');
+root.textContent = '';
+render(html`<${App} />`, root);

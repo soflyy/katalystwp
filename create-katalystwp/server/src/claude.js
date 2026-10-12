@@ -260,6 +260,7 @@ export class ClaudeEngine {
       eventLogPath: join(this.config.sessionsDir, `${id}.ndjson`),
       createdAt: new Date().toISOString(),
       lastActivityAt: new Date().toISOString(),
+      seenAt: new Date().toISOString(), // the UI shows a reply as new while lastActivityAt is later
     };
     await this.store.create(record);
     this._runTurn(env, record, prompt);

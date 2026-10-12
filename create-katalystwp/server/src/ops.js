@@ -182,6 +182,7 @@ export function buildOps(config, registry, manager, sessions, presets) {
     archived: !!s.archived,
     createdAt: s.createdAt,
     lastActivityAt: s.lastActivityAt,
+    seenAt: s.seenAt || null,
     sshResumeHint: sshHint(s),
   });
 
