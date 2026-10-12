@@ -22,6 +22,7 @@ const SECRET_FIELDS = ['githubToken', 'claudeToken', 'codexToken', 'opencodeToke
 
 function defaults() {
   return {
+    name: 'Devbox', // shown in the UI's sidebar header and tab title
     githubToken: '',
     claudeToken: '',
     codexToken: '',
@@ -74,6 +75,7 @@ export class SettingsStore {
     const s = this.data.settings;
     const mask = (v) => (v ? { set: true, hint: `••••${String(v).slice(-4)}` } : { set: false });
     return {
+      name: s.name,
       githubToken: mask(s.githubToken),
       claudeToken: mask(s.claudeToken),
       codexToken: mask(s.codexToken),
@@ -106,7 +108,7 @@ export class SettingsStore {
   update(patch = {}) {
     return this.mutex(async () => {
       const next = { ...this.data.settings };
-      for (const k of ['wpAdminUser', 'wpAdminEmail']) {
+      for (const k of ['name', 'wpAdminUser', 'wpAdminEmail']) {
         if (typeof patch[k] === 'string' && patch[k].trim()) next[k] = patch[k].trim();
       }
       for (const k of SECRET_FIELDS) {
