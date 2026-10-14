@@ -36,6 +36,29 @@ async function uploadFile(envId, file) {
   if (!res.ok) throw new Error(body.error || `${res.status} ${res.statusText}`);
   return body;
 }
+// Unsent message text per session, kept in this browser so switching
+// sessions or reloading doesn't lose it. Drafts untouched for 30 days go.
+const DRAFT_PREFIX = 'devbox_draft_';
+const DRAFT_MAX_AGE = 30 * 24 * 60 * 60 * 1000;
+const loadDraft = (id) => {
+  try { const d = JSON.parse(localStorage.getItem(DRAFT_PREFIX + id) || 'null'); return d && typeof d.text === 'string' ? d.text : ''; } catch { return ''; }
+};
+const saveDraft = (id, text) => {
+  try {
+    if (text.trim()) localStorage.setItem(DRAFT_PREFIX + id, JSON.stringify({ text, at: Date.now() }));
+    else localStorage.removeItem(DRAFT_PREFIX + id);
+  } catch { /* storage unavailable or full: not saved */ }
+};
+const dropOldDrafts = () => {
+  try {
+    for (const k of Object.keys(localStorage)) {
+      if (!k.startsWith(DRAFT_PREFIX)) continue;
+      const d = JSON.parse(localStorage.getItem(k) || 'null');
+      if (!d || !(Date.now() - d.at < DRAFT_MAX_AGE)) localStorage.removeItem(k);
+    }
+  } catch { /* storage unavailable */ }
+};
+
 const streamUrl = (id) => {
   const t = token.get();
   return `/sessions/${id}/stream${t ? `?access_token=${encodeURIComponent(t)}` : ''}`;
@@ -682,7 +705,7 @@ function SessionView({ session, env, now, onChanged, onMenu, onDelete, onArchive
   const [loading, setLoading] = useState(true);
   const [loadErr, setLoadErr] = useState('');
   const [busy, setBusy] = useState(false);
-  const [input, setInput] = useState('');
+  const [input, setInput] = useState(() => loadDraft(session.id));
   const [effort, setEffort] = useState(''); // per-message effort; '' = the session's own
   const [copied, setCopied] = useState(false);
   const [previewPath, setPreviewPath] = useState(null); // workspace file shown in FileModal
@@ -702,6 +725,19 @@ function SessionView({ session, env, now, onChanged, onMenu, onDelete, onArchive
   const stick = useRef(true); // follow the stream only while pinned near the bottom
   const [hasNew, setHasNew] = useState(false);
   const id = session.id;
+  // The draft is saved shortly after the last keystroke, and again when the
+  // session is left or the page closes; sending or queuing clears it.
+  const latestInput = useRef(input);
+  latestInput.current = input;
+  useEffect(() => {
+    const t = setTimeout(() => saveDraft(id, input), 300);
+    return () => clearTimeout(t);
+  }, [input]);
+  useEffect(() => {
+    const flush = () => saveDraft(id, latestInput.current);
+    window.addEventListener('pagehide', flush);
+    return () => { window.removeEventListener('pagehide', flush); flush(); };
+  }, [id]);
 
   useEffect(() => {
     // Reset for the newly-selected session, load history, then go live.
@@ -1746,6 +1782,7 @@ function App() {
 
   useEffect(() => { if (authed) { refresh(); const t = setInterval(refresh, 3000); return () => clearInterval(t); } }, [authed, refresh]);
   useEffect(() => { if (authed) api('/settings').then((d) => d.name && setBoxName(d.name)).catch(() => {}); }, [authed]);
+  useEffect(dropOldDrafts, []);
   useEffect(() => { document.title = `${boxName} · Claude sessions`; }, [boxName]);
 
   // Opening a session, or a reply landing while it's on screen, marks it seen.
